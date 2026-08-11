@@ -176,10 +176,13 @@ export function RendezVousApp() {
   const declined = match?.inviteStatus === "declined";
   const paramsConfirmed = match?.timeControlConfirmed === true;
   const isPlaying = match?.status === "playing";
-  const chessStarted = Boolean(isPlaying && match?.readyWhite && match?.readyBlack);
-  const isArmed = match?.status === "scheduled" && accepted && paramsConfirmed;
-  /* Game is over when chess says so OR the server marked it completed (resign, timeout, draw). */
+  /* La partie en cours reste affichée même terminée : sinon un timeout/abandon après
+     un ready vide ferait disparaître tout l'écran (bug de l'écran noir). */
+  /* la partie est finie si le moteur d'echecs dit fin, OU le serveur a clos (abandon, timeout, nulle, mat...) */
   const matchOver = match?.status === "completed" || match?.result != null;
+  /* on garde l'ecran echecs visible apres la fin : sinon l'ecran disparait (bug ecran noir) */
+  const chessStarted = Boolean(match && (isPlaying || matchOver));
+  const isArmed = match?.status === "scheduled" && accepted && paramsConfirmed;
   const isOver = chess.isGameOver() || matchOver;
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
@@ -200,7 +203,7 @@ export function RendezVousApp() {
     return first + 60_000;
   }, [match]);
   const readySecondsLeft = Math.max(0, Math.floor((readyDeadline - now) / 1000));
-  const readyCheckActive = Boolean(isPlaying && !chessStarted);
+  const readyCheckActive = Boolean(isPlaying && !matchOver);
 
   const myTurn = chessStarted && chess.turn() === myColor;
   const clockOf = useCallback((color: "w" | "b") => {
