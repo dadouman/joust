@@ -178,7 +178,9 @@ export function RendezVousApp() {
   const isPlaying = match?.status === "playing";
   const chessStarted = Boolean(isPlaying && match?.readyWhite && match?.readyBlack);
   const isArmed = match?.status === "scheduled" && accepted && paramsConfirmed;
-  const isOver = chess.isGameOver();
+  /* Game is over when chess says so OR the server marked it completed (resign, timeout, draw). */
+  const matchOver = match?.status === "completed" || match?.result != null;
+  const isOver = chess.isGameOver() || matchOver;
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
   const timeLeft = match ? new Date(match.scheduledAt).getTime() - now : 0;
@@ -665,24 +667,33 @@ export function RendezVousApp() {
                       : <Btn variant="secondary" onClick={() => void patch({ action: "draw", playerName: pseudo }, "Proposition de nulle envoyée")} disabled={saving}>Proposer la nulle</Btn>}
                   </div>
                 )}
-                {isOver && match.result && matchDays.length > 0 && (
+                {isOver && (
                   <Card className="p-4 text-center">
                     <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Résultat</p>
                     <p className="mt-2 text-sm font-black text-white">
-                      {match.winnerName ? match.winnerName + " gagne (" + match.result + ")" : "Partie nulle (" + match.result + ")"}
+                      {match.winnerName
+                        ? match.winnerName + " gagne (" + (match.result || "abandon") + ")"
+                        : "Partie nulle" + (match.result ? " (" + match.result + ")" : "")}
                     </p>
                     {match.ratingWhiteAfter != null && match.ratingBlackAfter != null && (
                       <p className="mt-1 text-[11px] text-[#6b6882]">
                         Elo : {match.whitePlayer} {match.ratingWhiteAfter} · {match.blackPlayer} {match.ratingBlackAfter}
                       </p>
                     )}
+                    {matchDays.length > 0 && (
+                      <>
+                        <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain Joust</p>
+                        <p className="mt-2 text-sm font-bold capitalize text-white">{computeNextOccurrence(match.timeOfDay, matchDays).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
+                      </>
+                    )}
                     <div className="mt-4 grid grid-cols-2 gap-2">
                       <Btn onClick={() => void patch({ action: "rematch", scheduledAt: computeNextOccurrence(match.timeOfDay, matchDays).toISOString() }, "Revanche lancee !")} disabled={saving}>Revanche</Btn>
-                      <Btn variant="secondary" onClick={() => void patch({ action: "reschedule", scheduledAt: computeNextOccurrence(match.timeOfDay, matchDays).toISOString() }, "Joust reprogrammee")} disabled={saving}>Reprogrammer</Btn>
+                      <Btn variant="secondary" onClick={() => { localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setDays([1, 3, 5]); setTimeOfDay("20:30"); setTimeControl("blitz"); setScreen("create"); }}>Nouvelle joust</Btn>
                     </div>
                   </Card>
                 )}
-                <Btn variant="ghost" onClick={leaveMatch}>Quitter</Btn>
+                {isOver && <Btn variant="ghost" onClick={leaveMatch}>Retour à l'accueil</Btn>}
+                {!isOver && <Btn variant="ghost" onClick={leaveMatch}>Quitter</Btn>}
               </div>
             )}
           </div>
