@@ -1,0 +1,23 @@
+# Dependencies
+/node_modules
+
+# Next.js build output
+/.next
+/out
+
+# TypeScript artifacts
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# Database
+/drizzle
+
+# VAPID keys
+.vapid.json
+
+# Joust internal reviews — not meant to be committed
+/docs/reviews/

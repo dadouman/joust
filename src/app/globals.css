@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #08090e;
+  --surface: #0f1118;
+  --card: #13151d;
+  --border: rgba(255, 255, 255, 0.06);
+  --accent: #a78bfa;
+  --accent2: #c084fc;
+  --text: #e8e6f0;
+  --muted: #6b6882;
+  --radius: 20px;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+/* Unified scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border-radius: 999px; background: #2a2a3a; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a50; }
+
+/* Prevent zoom on mobile inputs */
+@media (max-width: 640px) {
+  input, select { font-size: 16px !important; }
+}
+
+/* Unified animation */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes softPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes gentleSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.anim-fade-up { animation: fadeUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-fade-up-d1 { animation: fadeUp 0.45s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-fade-up-d2 { animation: fadeUp 0.45s 0.16s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-fade-up-d3 { animation: fadeUp 0.45s 0.24s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-pulse { animation: softPulse 2s ease-in-out infinite; }
+.anim-spin { animation: gentleSpin 4s linear infinite; }

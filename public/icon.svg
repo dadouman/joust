@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Synchro">
+  <rect width="512" height="512" rx="122" fill="#101b2d"/>
+  <circle cx="256" cy="256" r="156" fill="none" stroke="#adff72" stroke-width="34"/>
+  <path d="M256 158v105l72 45" fill="none" stroke="#adff72" stroke-linecap="round" stroke-linejoin="round" stroke-width="34"/>
+  <circle cx="256" cy="256" r="18" fill="#adff72"/>
+</svg>
