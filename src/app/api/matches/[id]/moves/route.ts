@@ -82,7 +82,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     if (!legalMove) return Response.json({ error: "Ce coup n’est pas légal." }, { status: 400 });
 
     const previousMoves = await db
-      .select({ ply: matchMoves.ply })
+      .select({ ply: matchMoves.ply, san: matchMoves.san })
       .from(matchMoves)
       .where(eq(matchMoves.matchId, id))
       .orderBy(asc(matchMoves.ply));
@@ -123,7 +123,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       .returning();
 
     if (nextStatus === "completed" && gameResult) {
-      const updated = await persistResult(match, gameResult, gameWinner);
+      const allMoves = [...previousMoves, { ply: previousMoves.length + 1, san: legalMove.san }];
+      const updated = await persistResult(match, gameResult, gameWinner, allMoves);
       notifyMatch(
         id,
         gameWinner ? "♛ Échec et mat !" : "🤝 Partie nulle",

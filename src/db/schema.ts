@@ -60,6 +60,9 @@ export const matches = pgTable(
     drawStatus: varchar("draw_status", { length: 16 }).notNull().default("none"),
     drawProposedBy: varchar("draw_proposed_by", { length: 16 }),
 
+    /* PGN final de la partie (persistance sans UI) */
+    pgn: text("pgn"),
+
     /* ── Friendly ratings (2-player Elo) ── */
     ratingWhiteBefore: integer("rating_white_before").notNull().default(1000),
     ratingBlackBefore: integer("rating_black_before").notNull().default(1000),

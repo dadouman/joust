@@ -265,7 +265,37 @@ export function RendezVousApp() {
 
   useEffect(() => { const h = (e: Event) => { e.preventDefault(); deferredPrompt.current = e as unknown as { prompt: () => Promise<void> }; }; window.addEventListener("beforeinstallprompt", h); window.addEventListener("focus", refreshNotif); return () => { window.removeEventListener("beforeinstallprompt", h); window.removeEventListener("focus", refreshNotif); }; }, [refreshNotif]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
-  useEffect(() => { if (!match || screen !== "match") return; const t = setInterval(() => void load(match.id), isPlaying ? 3000 : 2500); return () => clearInterval(t); }, [match?.id, isPlaying, screen, load]);
+  /* Polling de secours lent (8 s) — le quasi temps réel est fourni par SSE */
+  useEffect(() => { if (!match || screen !== "match") return; const t = setInterval(() => void load(match.id), 8000); return () => clearInterval(t); }, [match?.id, screen, load]);
+
+  /* SSE — quasi temps réel (< 500 ms) : coup adverse, prêt, changement de statut => rechargement immédiat */
+  useEffect(() => {
+    if (!match || screen !== "match" || typeof EventSource === "undefined") return;
+    let stopped = false;
+    let es: EventSource | null = null;
+    let retry: number | undefined;
+
+    const connect = () => {
+      try {
+        es = new EventSource(`/api/matches/${match.id}/stream`);
+      } catch {
+        retry = window.setTimeout(connect, 2000);
+        return;
+      }
+      es.addEventListener("update", () => { if (!stopped) void load(match.id); });
+      es.onerror = () => {
+        es?.close();
+        if (!stopped) retry = window.setTimeout(connect, 2000);
+      };
+    };
+    connect();
+
+    return () => {
+      stopped = true;
+      if (retry) window.clearTimeout(retry);
+      es?.close();
+    };
+  }, [match?.id, screen, load]);
   useEffect(() => { if (match?.status === "scheduled" && accepted && paramsConfirmed && timeLeft <= 0) void load(match.id); }, [timeLeft, match?.id, match?.status, accepted, paramsConfirmed, load]);
   useEffect(() => {
     if (match && match.inviteStatus === "accepted" && match.timeControlConfirmed && !pushSubscribed && !tutorialOpen) {
