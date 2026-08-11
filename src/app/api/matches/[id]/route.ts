@@ -269,8 +269,6 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           result: null,
           winnerName: null,
           endedAt: null,
-          ratingWhiteAfter: null,
-          ratingBlackAfter: null,
           updatedAt: now,
         })
         .where(eq(matches.id, id))
@@ -303,10 +301,6 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           result: null,
           winnerName: null,
           endedAt: null,
-          ratingWhiteBefore: match.ratingBlackAfter ?? match.ratingBlackBefore ?? 1000,
-          ratingBlackBefore: match.ratingWhiteAfter ?? match.ratingWhiteBefore ?? 1000,
-          ratingWhiteAfter: null,
-          ratingBlackAfter: null,
           updatedAt: now,
         })
         .where(eq(matches.id, id))

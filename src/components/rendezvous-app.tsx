@@ -708,11 +708,6 @@ export function RendezVousApp() {
                         ? match.winnerName + " gagne (" + (match.result || "abandon") + ")"
                         : "Partie nulle" + (match.result ? " (" + match.result + ")" : "")}
                     </p>
-                    {match.ratingWhiteAfter != null && match.ratingBlackAfter != null && (
-                      <p className="mt-1 text-[11px] text-[#6b6882]">
-                        Elo : {match.whitePlayer} {match.ratingWhiteAfter} · {match.blackPlayer} {match.ratingBlackAfter}
-                      </p>
-                    )}
                     {matchDays.length > 0 && (
                       <>
                         <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain Joust</p>

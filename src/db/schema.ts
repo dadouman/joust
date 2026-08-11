@@ -63,12 +63,6 @@ export const matches = pgTable(
     /* PGN final de la partie (persistance sans UI) */
     pgn: text("pgn"),
 
-    /* ── Friendly ratings (2-player Elo) ── */
-    ratingWhiteBefore: integer("rating_white_before").notNull().default(1000),
-    ratingBlackBefore: integer("rating_black_before").notNull().default(1000),
-    ratingWhiteAfter: integer("rating_white_after"),
-    ratingBlackAfter: integer("rating_black_after"),
-
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -122,8 +116,6 @@ export const playerStats = pgTable(
     winsB: integer("wins_b").notNull().default(0),
     draws: integer("draws").notNull().default(0),
     matchCount: integer("match_count").notNull().default(0),
-    ratingA: integer("rating_a").notNull().default(1000),
-    ratingB: integer("rating_b").notNull().default(1000),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("player_stats_pair_key_idx").on(table.pairKey)],
