@@ -400,11 +400,13 @@ export function RendezVousApp() {
   const patch = useCallback(async (body: Record<string, unknown>, msg?: string) => {
     if (!match) return; setSaving(true);
     try {
-      const r = await fetch(`/api/matches/${match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      /* Auth requires the connected account pseudo on every action (review auth §5) */
+      const payload = { ...body, playerName: body.playerName ?? pseudo };
+      const r = await fetch(`/api/matches/${match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const d = (await r.json()) as { match?: Match; moves?: Move[]; error?: string };
       if (d.match) { apply({ match: d.match, moves: d.moves }); if (msg) notify(msg); } else if (d.error) notify(d.error);
     } catch { notify("Action impossible"); } finally { setSaving(false); }
-  }, [match, apply, notify]);
+  }, [match, apply, notify, pseudo]);
 
   function sendCounter() {
     if (!match) return;
