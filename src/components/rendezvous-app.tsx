@@ -156,6 +156,7 @@ export function RendezVousApp() {
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [editing, setEditing] = useState(false);
   const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
+  const prevWaitingRef = useRef(false);
   const platform = detectPlatform();
   const standalone = isStandalone();
 
@@ -351,6 +352,19 @@ export function RendezVousApp() {
     }
   }, [match?.inviteStatus, match?.timeControlConfirmed, pushSubscribed, tutorialOpen]);
   useEffect(() => setSelectedSquare(null), [match?.lastFen]);
+
+  /* Notification visuelle quand l'adversaire modifie la proposition que j'ai envoyée :
+     passage de "en attente de sa réponse" à "à moi de répondre" (contre-proposition reçue). */
+  useEffect(() => {
+    if (!match) return;
+    const prevWaiting = prevWaitingRef.current;
+    prevWaitingRef.current = waitingOnOpponent;
+    /* Ne notifier que les transitions déclenchées par une mise à jour serveur
+       (pas au chargement initial), si on doit maintenant répondre et que la joust est toujours en négociation. */
+    if (prevWaiting && !waitingOnOpponent && iMustAnswer && hasOpponent && !accepted) {
+      notify("🔄 Ton adversaire a modifié la proposition.");
+    }
+  }, [match, waitingOnOpponent, iMustAnswer, hasOpponent, accepted, notify]);
 
   /* ── share content ── */
   const appOrigin = typeof window !== "undefined" ? window.location.origin : "";
