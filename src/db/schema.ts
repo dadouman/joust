@@ -104,6 +104,27 @@ export const users = pgTable(
   ],
 );
 
+/* Auth sessions — HTTP-only cookie `session` holds a random 32-byte token.
+   Only the SHA-256 hash of that token is stored here (review auth §3). */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /* SHA-256 hex of the raw session token (never stored in plaintext) */
+    tokenHash: text("token_hash").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("sessions_user_id_idx").on(table.userId),
+    index("sessions_token_hash_idx").on(table.tokenHash),
+    index("sessions_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
 /* Head-to-head stats between the two friends (review 3.3) */
 export const playerStats = pgTable(
   "player_stats",

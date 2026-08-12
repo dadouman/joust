@@ -3,6 +3,7 @@ import { Chess } from "chess.js";
 import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matchMoves, matches } from "@/db/schema";
+import { assertCanActAs } from "@/lib/auth";
 import { notifyMatch } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
@@ -24,18 +25,29 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       to?: string;
       promotion?: string;
       playerName?: string;
+      token?: string;
     };
     const from = body.from?.toLowerCase() ?? "";
     const to = body.to?.toLowerCase() ?? "";
     const promotion = body.promotion?.toLowerCase();
     const playerName = body.playerName?.trim();
+    const token = body.token;
 
     if (!squarePattern.test(from) || !squarePattern.test(to) || (promotion && !promotionPattern.test(promotion))) {
       return Response.json({ error: "Coup invalide." }, { status: 400 });
     }
+    if (!playerName) {
+      return Response.json({ error: "Joueur requis." }, { status: 400 });
+    }
 
     const [match] = await db.select().from(matches).where(eq(matches.id, id)).limit(1);
     if (!match) return Response.json({ error: "Rendez-vous introuvable." }, { status: 404 });
+
+    /* Authenticate: session cookie must match the account pseudo, or legacy per-match token. */
+    const actor = await assertCanActAs(match, playerName, token);
+    if (!actor) {
+      return Response.json({ error: "Connecte-toi pour jouer." }, { status: 401 });
+    }
 
     if (match.status === "completed") {
       return Response.json({ error: "Cette partie est déjà terminée." }, { status: 409 });

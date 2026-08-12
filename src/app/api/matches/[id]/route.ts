@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matchMoves, matches } from "@/db/schema";
+import { assertCanActAs } from "@/lib/auth";
 import { notifyMatch } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
@@ -61,31 +62,59 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       by?: string;
       scheduledAt?: string;
       playerName?: string;
+      token?: string;
     };
     const now = new Date();
+    const playerName = body.playerName?.trim();
+    const token = body.token;
+
+    /** Require the request to be authenticated as `playerName`.
+        Legacy per-match tokens still work; otherwise the session cookie must match the account pseudo. */
+    async function requireActor() {
+      const actor = await assertCanActAs(match, playerName ?? "", token);
+      if (!actor) {
+        return Response.json(
+          { error: "Connecte-toi pour agir sur une joust." },
+          { status: 401 },
+        );
+      }
+      if (!playerName) {
+        return Response.json({ error: "Joueur requis." }, { status: 400 });
+      }
+      if (playerName !== match.creatorName && playerName !== match.guestName) {
+        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
+      }
+      return null;
+    }
 
     /* ── A friend joins with the invite code ── */
     if (body.action === "join") {
-      const playerName = body.playerName?.trim().slice(0, 80);
-      if (!playerName) return Response.json({ error: "Pseudo requis." }, { status: 400 });
-      if (playerName === match.creatorName) {
+      const cleanName = playerName?.slice(0, 80);
+      if (!cleanName) return Response.json({ error: "Pseudo requis." }, { status: 400 });
+      const actor = await assertCanActAs(match, cleanName, token);
+      if (!actor) {
+        return Response.json({ error: "Connecte-toi pour rejoindre une joust." }, { status: 401 });
+      }
+      if (cleanName === match.creatorName) {
         return Response.json({ error: "Ce pseudo est déjà celui de l’hôte." }, { status: 409 });
       }
-      if (match.guestName && match.guestName !== playerName) {
+      if (match.guestName && match.guestName !== cleanName) {
         return Response.json({ error: "Cette joust a déjà un adversaire." }, { status: 409 });
       }
 
       const [updated] = await db
         .update(matches)
-        .set({ guestName: playerName, blackPlayer: playerName, updatedAt: now })
+        .set({ guestName: cleanName, blackPlayer: cleanName, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "👋 Un adversaire !", `${playerName} a rejoint votre Joust.`);
+      notifyMatch(id, "👋 Un adversaire !", `${cleanName} a rejoint votre Joust.`);
       return Response.json({ match: serializeMatch(updated), moves: [] });
     }
 
     /* ── Accept the current parameters as-is ── */
     if (body.action === "accept") {
+      const denied = await requireActor();
+      if (denied) return denied;
       const [updated] = await db
         .update(matches)
         .set({ inviteStatus: "accepted", timeControlConfirmed: true, updatedAt: now })
@@ -97,10 +126,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Counter-proposal: change any parameter, needs the other side to accept ── */
     if (body.action === "counter") {
+      const denied = await requireActor();
+      if (denied) return denied;
       const by = body.by === "guest" ? "guest" : "creator";
       const chosen = isTimeControl(body.timeControl) ? body.timeControl : match.timeControl;
       const nextDate = body.scheduledAt ? new Date(body.scheduledAt) : match.scheduledAt;
-      /* Validate proposed time of day + recurrence via shared helpers */
       const proposedTimeOfDay = typeof body.timeOfDay === "string" ? body.timeOfDay : match.timeOfDay;
       const safeTimeOfDay = /^\d{1,2}:\d{2}$/.test(proposedTimeOfDay.trim()) ? proposedTimeOfDay.trim() : match.timeOfDay;
       const proposedDays = typeof body.recurrenceDays === "string" ? body.recurrenceDays : match.recurrenceDays;
@@ -129,6 +159,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Guest declines ── */
     if (body.action === "decline") {
+      const denied = await requireActor();
+      if (denied) return denied;
       const [updated] = await db
         .update(matches)
         .set({ inviteStatus: "declined", updatedAt: now })
@@ -140,7 +172,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Ready check: player clicked "Prêt" ── */
     if (body.action === "ready") {
-      const playerName = body.playerName?.trim();
+      const denied = await requireActor();
+      if (denied) return denied;
       if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
 
       const isWhitePlayer = playerName === match.whitePlayer;
@@ -164,6 +197,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Manual start (both validations required) ── */
     if (body.action === "start") {
+      const denied = await requireActor();
+      if (denied) return denied;
       if (match.inviteStatus !== "accepted" || !match.timeControlConfirmed) {
         return Response.json({ error: "Les deux joueurs doivent valider la joust." }, { status: 409 });
       }
@@ -179,11 +214,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Resign (review 3.2 §2) ── */
     if (body.action === "resign") {
-      const playerName = body.playerName?.trim();
-      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
-      if (playerName !== match.whitePlayer && playerName !== match.blackPlayer) {
-        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
-      }
+      const denied = await requireActor();
+      if (denied) return denied;
       const winner = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
       const updated = await persistResult(match, "resign", winner);
       notifyMatch(id, "🏳️ Abandon", `${playerName} a abandonné. ${winner} gagne.`);
@@ -192,11 +224,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Draw proposal (review 3.2 §2) ── */
     if (body.action === "draw") {
-      const playerName = body.playerName?.trim();
-      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
-      if (playerName !== match.whitePlayer && playerName !== match.blackPlayer) {
-        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
-      }
+      const denied = await requireActor();
+      if (denied) return denied;
       if (match.status !== "playing") {
         return Response.json({ error: "La partie n'est pas en cours." }, { status: 409 });
       }
@@ -212,11 +241,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Accept draw proposal ── */
     if (body.action === "draw-accept") {
-      const playerName = body.playerName?.trim();
-      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
-      if (playerName !== match.whitePlayer && playerName !== match.blackPlayer) {
-        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
-      }
+      const denied = await requireActor();
+      if (denied) return denied;
       const byMe = playerName === match.creatorName ? "creator" : "guest";
       if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
         return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
@@ -228,11 +254,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Decline draw proposal ── */
     if (body.action === "draw-decline") {
-      const playerName = body.playerName?.trim();
-      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
-      if (playerName !== match.whitePlayer && playerName !== match.blackPlayer) {
-        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
-      }
+      const denied = await requireActor();
+      if (denied) return denied;
       const byMe = playerName === match.creatorName ? "creator" : "guest";
       if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
         return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
@@ -248,6 +271,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Re-arm the recurring alarm ── */
     if (body.action === "reschedule") {
+      const denied = await requireActor();
+      if (denied) return denied;
       const nextDate = new Date(body.scheduledAt ?? "");
       if (Number.isNaN(nextDate.getTime())) {
         return Response.json({ error: "Prochaine occurrence invalide." }, { status: 400 });
@@ -278,6 +303,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     /* ── Rematch with inverted colors (review 3.3) ── */
     if (body.action === "rematch") {
+      const denied = await requireActor();
+      if (denied) return denied;
       const nextDate = new Date(body.scheduledAt ?? "");
       if (Number.isNaN(nextDate.getTime())) {
         return Response.json({ error: "Prochaine occurrence invalide." }, { status: 400 });

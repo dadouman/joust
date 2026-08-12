@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, Check, Copy, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, Check, Copy, LogOut, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { WEEKDAYS, computeNextOccurrence, describeRecurrence, formatDays, parseDays } from "@/lib/recurrence";
@@ -42,7 +42,8 @@ type Match = {
   ratingBlackAfter: number | null;
 };
 type Move = { id: string; fromSquare: string; toSquare: string; san: string; ply: number };
-type Screen = "onboarding" | "home" | "create" | "join" | "match";
+type AuthUser = { id: string; pseudo: string; email: string } | null;
+type Screen = "onboarding" | "auth" | "home" | "create" | "join" | "match";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const PSEUDO_KEY = "joust-pseudo";
@@ -136,6 +137,11 @@ export function RendezVousApp() {
   const [screen, setScreen] = useState<Screen>("onboarding");
   const [pseudo, setPseudo] = useState("");
   const [pseudoInput, setPseudoInput] = useState("");
+  const [authUser, setAuthUser] = useState<AuthUser>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authError, setAuthError] = useState("");
   const [match, setMatch] = useState<Match | null>(null);
   const [moves, setMoves] = useState<Move[]>([]);
   const [now, setNow] = useState(() => Date.now());
@@ -245,20 +251,68 @@ export function RendezVousApp() {
     if ("serviceWorker" in navigator) navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription().then((s) => setPushSubscribed(Boolean(s))).catch(() => setPushSubscribed(false)));
   }, []);
 
+  /* ── auth actions ── */
+  async function submitAuth(e: React.FormEvent) {
+    e.preventDefault(); setSaving(true); setAuthError("");
+    try {
+      const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const body = authMode === "login"
+        ? { email: authEmail, password: authPassword }
+        : { email: authEmail, password: authPassword, pseudo: pseudoInput };
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = (await r.json()) as { user?: NonNullable<AuthUser>; error?: string };
+      if (!d.user) { setAuthError(d.error ?? "Connexion impossible."); return; }
+      setAuthUser(d.user);
+      setPseudo(d.user.pseudo);
+      localStorage.setItem(PSEUDO_KEY, d.user.pseudo);
+      setScreen(codeInput ? "join" : "home");
+    } catch { setAuthError("Connexion impossible."); } finally { setSaving(false); }
+  }
+
+  async function logout() {
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch { /* */ }
+    setAuthUser(null);
+    setPseudo("");
+    setPseudoInput("");
+    setAuthEmail("");
+    setAuthPassword("");
+    setAuthError("");
+    setMatch(null);
+    setMoves([]);
+    localStorage.removeItem(MATCH_KEY);
+    localStorage.removeItem(PSEUDO_KEY);
+    setScreen("onboarding");
+  }
+
   /* ── boot ── */
   useEffect(() => { if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined); }, []);
   useEffect(() => {
     (async () => {
       try {
-        const savedPseudo = localStorage.getItem(PSEUDO_KEY);
         const urlCode = new URLSearchParams(window.location.search).get("code");
+        if (urlCode) setCodeInput(urlCode.toUpperCase());
+        /* 1. Try to restore the server session cookie first */
+        let restoredPseudo: string | null = null;
+        try {
+          const r = await fetch("/api/auth/me", { cache: "no-store" });
+          if (r.ok) {
+            const d = (await r.json()) as { user?: NonNullable<AuthUser> };
+            if (d.user) {
+              setAuthUser(d.user);
+              setPseudo(d.user.pseudo);
+              restoredPseudo = d.user.pseudo;
+            }
+          }
+        } catch { /* session cookie absent */ }
+
+        /* 2. Fall back to the legacy localStorage pseudo (guest mode) */
+        const savedPseudo = restoredPseudo ?? localStorage.getItem(PSEUDO_KEY);
         if (!savedPseudo) {
-          if (urlCode) setCodeInput(urlCode.toUpperCase());
-          setScreen("onboarding");
+          setScreen(urlCode ? "auth" : "onboarding");
           return;
         }
-        setPseudo(savedPseudo);
-        if (urlCode) { setCodeInput(urlCode.toUpperCase()); setScreen("join"); return; }
+        if (!restoredPseudo) setPseudo(savedPseudo);
+        if (urlCode) { setScreen("join"); return; }
         const savedMatch = localStorage.getItem(MATCH_KEY);
         if (savedMatch) { await load(savedMatch); setScreen("match"); return; }
         setScreen("home");
@@ -326,6 +380,12 @@ export function RendezVousApp() {
     localStorage.setItem(PSEUDO_KEY, clean);
     setPseudo(clean);
     setScreen(codeInput ? "join" : "home");
+  }
+
+  function goToAuth() {
+    setAuthMode("login");
+    setAuthError("");
+    setScreen("auth");
   }
 
   async function createMatch(e: React.FormEvent) {
@@ -463,7 +523,7 @@ export function RendezVousApp() {
       {toast && <div className="anim-fade-up fixed left-1/2 top-20 z-[60] w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2"><div className="rounded-2xl border border-violet-500/25 bg-[#1a1626] px-4 py-3 text-center text-xs font-bold text-violet-200 shadow-2xl shadow-black/40">{toast}</div></div>}
 
       {/* Header */}
-      {screen !== "onboarding" && (
+      {screen !== "onboarding" && screen !== "auth" && (
         <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
@@ -476,7 +536,8 @@ export function RendezVousApp() {
             </div>
             <div className="flex items-center gap-2">
               {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
-              {pseudo && <div className="flex items-center gap-2 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></div>}
+              {pseudo && <div className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></div>}
+              {authUser && <button type="button" onClick={() => void logout()} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
             </div>
           </div>
         </header>
@@ -490,16 +551,53 @@ export function RendezVousApp() {
             <div className="text-center">
               <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-violet-600 shadow-2xl shadow-violet-600/30"><ChessPiece color="w" type="n" className="h-11 w-11 text-white" /></div>
               <h1 className="mt-6 text-3xl font-black tracking-tight text-white">Joust</h1>
-              <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-[#6b6882]">Une partie d&apos;échecs, à l&apos;heure dite.</p>
+              <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-[#6b6882]">Une partie d'échecs, à l'heure dite.</p>
             </div>
             <Card className="anim-fade-up-d1 p-6">
               <form onSubmit={(e) => { e.preventDefault(); saveP(pseudoInput); }} className="space-y-4">
                 <Field label="Ton pseudo">
                   <input value={pseudoInput} onChange={(e) => setPseudoInput(e.target.value)} maxLength={40} autoFocus placeholder="Lina" className={`${inputCls} text-center text-lg font-black`} />
                 </Field>
-                <p className="text-center text-[11px] leading-4 text-[#6b6882]">Il identifie ta partie.</p>
-                <Btn type="submit" disabled={pseudoInput.trim().length < 2}>Continuer</Btn>
+                <p className="text-center text-[11px] leading-4 text-[#6b6882]">Joue en invité.</p>
+                <Btn type="submit" disabled={pseudoInput.trim().length < 2}>Continuer en invité</Btn>
               </form>
+              <div className="mt-4 border-t border-white/[0.05] pt-4">
+                <Btn variant="secondary" onClick={goToAuth}><span className="inline-flex items-center gap-1.5"><UserPlus size={14} /> Créer un compte</span></Btn>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* ══ 1b. AUTH (register / login) ══ */}
+        {screen === "auth" && (
+          <div className="anim-fade-up w-full space-y-6">
+            <div className="text-center">
+              <Badge tone="accent">{authMode === "login" ? "Connexion" : "Inscription"}</Badge>
+              <h1 className="mt-4 text-2xl font-black tracking-tight text-white">{authMode === "login" ? "Bon retour !" : "Créer un compte"}</h1>
+              <p className="mt-2 text-sm text-[#6b6882]">{authMode === "login" ? "Retrouve ta session et tes jousts." : "Ton compte survit aux purges du navigateur."}</p>
+            </div>
+            <Card className="anim-fade-up-d1 p-6">
+              <form onSubmit={submitAuth} className="space-y-4">
+                {authMode === "register" && (
+                  <Field label="Pseudo">
+                    <input value={pseudoInput} onChange={(e) => setPseudoInput(e.target.value)} maxLength={40} autoFocus placeholder="Lina" className={inputCls} />
+                  </Field>
+                )}
+                <Field label="Email">
+                  <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="lina@exemple.fr" className={inputCls} />
+                </Field>
+                <Field label="Mot de passe">
+                  <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" className={inputCls} />
+                </Field>
+                {authError && <p className="rounded-xl bg-rose-500/[0.08] px-3 py-2 text-center text-[11px] font-bold text-rose-300 ring-1 ring-rose-500/20">{authError}</p>}
+                <Btn type="submit" disabled={saving || !authEmail.trim() || authPassword.length < 8}>{saving ? "Patiente…" : authMode === "login" ? "Se connecter" : "S'inscrire"}</Btn>
+              </form>
+              <div className="mt-4 border-t border-white/[0.05] pt-4">
+                <button type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }} className="w-full text-center text-xs font-bold text-violet-300 hover:text-violet-200">
+                  {authMode === "login" ? "Pas de compte ? Inscris-toi" : "Déjà un compte ? Connecte-toi"}
+                </button>
+                <button type="button" onClick={() => setScreen(codeInput ? "join" : "onboarding")} className="mt-2 w-full text-center text-[11px] font-bold text-[#6b6882] hover:text-[#c4c0d4]">← Retour</button>
+              </div>
             </Card>
           </div>
         )}
@@ -562,7 +660,7 @@ export function RendezVousApp() {
             {/* — waiting for opponent to join — */}
             {!hasOpponent && (
               <div className="anim-fade-up space-y-5">
-                <div className="text-center"><Badge tone="warn"><Dot /> En attente d&apos;un adversaire</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">Ta joust</h2></div>
+                <div className="text-center"><Badge tone="warn"><Dot /> En attente d'un adversaire</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">Ta joust</h2></div>
                 <Card className="anim-fade-up-d1 overflow-hidden p-0">
                   <div className="border-b border-white/[0.05] bg-gradient-to-b from-violet-600/[0.08] to-transparent px-6 py-6 text-center">
                     <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Code de la joust</p>
@@ -637,7 +735,7 @@ export function RendezVousApp() {
 
             {/* — declined — */}
             {declined && (
-              <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d&apos;autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l&apos;accueil</Btn></div></Card></div>
+              <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d'autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div></Card></div>
             )}
 
             {/* — armed countdown — */}
@@ -656,7 +754,7 @@ export function RendezVousApp() {
             {/* — ready check — */}
             {readyCheckActive && (
               <div className="anim-fade-up space-y-5">
-                <div className="text-center"><Badge tone="accent"><Dot on /> C&apos;est l&apos;heure !</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2><p className="mt-1.5 text-xs font-bold text-violet-300">{tc.label} · {tc.tag}</p></div>
+                <div className="text-center"><Badge tone="accent"><Dot on /> C'est l'heure !</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2><p className="mt-1.5 text-xs font-bold text-violet-300">{tc.label} · {tc.tag}</p></div>
                 <Card className="anim-fade-up-d1 overflow-hidden p-0">
                   <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
                     <div className="flex flex-col items-center gap-3 px-3 py-6"><Avatar name={pseudo} tone="a" /><p className="text-[11px] font-extrabold text-white">Toi</p><Badge tone={iAmReady ? "ok" : "warn"}>{iAmReady ? "Prêt" : "…"}</Badge></div>
@@ -738,7 +836,7 @@ export function RendezVousApp() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={`/api/qr?url=${encodeURIComponent(inviteLink)}`} alt={`QR code pour rejoindre la joust ${match.inviteCode}`} className="mx-auto mt-5 h-56 w-56 rounded-2xl bg-white p-3" />
             <p className="mt-4 font-mono text-2xl font-black tracking-[0.28em] text-white">{match.inviteCode}</p>
-            <p className="mt-2 text-[11px] leading-4 text-[#6b6882]">Ton ami scanne ce code avec l&apos;appareil photo pour ouvrir la joust.</p>
+            <p className="mt-2 text-[11px] leading-4 text-[#6b6882]">Ton ami scanne ce code avec l'appareil photo pour ouvrir la joust.</p>
           </div>
         </div>
       )}
@@ -768,10 +866,10 @@ export function RendezVousApp() {
       {tutorialOpen && match && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm sm:items-center">
           <div className="anim-fade-up max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[28px] border border-white/[0.08] bg-[#101018] p-6 shadow-2xl sm:rounded-[28px]">
-            <div className="flex items-start justify-between gap-4"><div><Badge tone="accent">Notifications</Badge><h2 className="mt-3 text-xl font-black tracking-tight text-white">Soyez prévenus à l&apos;heure H</h2><p className="mt-1.5 text-xs leading-5 text-[#6b6882]">Installe joust sur ton écran d&apos;accueil, puis autorise les notifications.</p></div><button type="button" onClick={() => setTutorialOpen(false)} aria-label="Fermer" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={15} /></button></div>
+            <div className="flex items-start justify-between gap-4"><div><Badge tone="accent">Notifications</Badge><h2 className="mt-3 text-xl font-black tracking-tight text-white">Soyez prévenus à l'heure H</h2><p className="mt-1.5 text-xs leading-5 text-[#6b6882]">Installe joust sur ton écran d'accueil, puis autorise les notifications.</p></div><button type="button" onClick={() => setTutorialOpen(false)} aria-label="Fermer" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={15} /></button></div>
             <div className="mt-5 flex items-center gap-4 rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.05]">{[{ label: "Installée", done: standalone }, { label: "Notifications", done: pushSubscribed }].map((s) => <div key={s.label} className="flex items-center gap-2"><span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500 text-[#0a0f0a]" : "bg-white/[0.05] text-[#6b6882] ring-1 ring-white/[0.08]"}`}>{s.done ? <Check size={11} /> : "·"}</span><span className={`text-[10px] font-bold ${s.done ? "text-emerald-300" : "text-[#6b6882]"}`}>{s.label}</span></div>)}</div>
-            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Partage ton Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l&apos;écran d&apos;accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l&apos;application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d&apos;adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
-            {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu&apos;une fois l&apos;app installée et ouverte depuis l&apos;écran d&apos;accueil (iOS 16.4+).</p></div>}
+            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Partage ton Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
+            {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu'une fois l'app installée et ouverte depuis l'écran d'accueil (iOS 16.4+).</p></div>}
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed || (platform === "ios" && !standalone)} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
             <div className="mt-4 rounded-2xl bg-violet-600/[0.10] px-4 py-3 ring-1 ring-violet-500/20"><p className="text-xs text-violet-200 font-bold">Astuce : envoie le message copié, ou montre le QR pour inviter ton ami.</p></div>
             <div className="mt-5 border-t border-white/[0.05] pt-4"><Btn variant="ghost" onClick={() => setTutorialOpen(false)}>Plus tard</Btn></div>
