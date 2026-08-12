@@ -43,10 +43,9 @@ type Match = {
 };
 type Move = { id: string; fromSquare: string; toSquare: string; san: string; ply: number };
 type AuthUser = { id: string; pseudo: string; email: string } | null;
-type Screen = "onboarding" | "auth" | "home" | "create" | "join" | "match";
+type Screen = "auth" | "home" | "create" | "join" | "match";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
-const PSEUDO_KEY = "joust-pseudo";
 const MATCH_KEY = "joust-match-id";
 
 /* ── atoms ── */
@@ -134,7 +133,7 @@ function detectPlatform() {
 
 /* ═══════════════════════════════════════ */
 export function RendezVousApp() {
-  const [screen, setScreen] = useState<Screen>("onboarding");
+  const [screen, setScreen] = useState<Screen>("auth");
   const [pseudo, setPseudo] = useState("");
   const [pseudoInput, setPseudoInput] = useState("");
   const [authUser, setAuthUser] = useState<AuthUser>(null);
@@ -264,7 +263,6 @@ export function RendezVousApp() {
       if (!d.user) { setAuthError(d.error ?? "Connexion impossible."); return; }
       setAuthUser(d.user);
       setPseudo(d.user.pseudo);
-      localStorage.setItem(PSEUDO_KEY, d.user.pseudo);
       setScreen(codeInput ? "join" : "home");
     } catch { setAuthError("Connexion impossible."); } finally { setSaving(false); }
   }
@@ -280,8 +278,7 @@ export function RendezVousApp() {
     setMatch(null);
     setMoves([]);
     localStorage.removeItem(MATCH_KEY);
-    localStorage.removeItem(PSEUDO_KEY);
-    setScreen("onboarding");
+    setScreen("auth");
   }
 
   /* ── boot ── */
@@ -291,8 +288,7 @@ export function RendezVousApp() {
       try {
         const urlCode = new URLSearchParams(window.location.search).get("code");
         if (urlCode) setCodeInput(urlCode.toUpperCase());
-        /* 1. Try to restore the server session cookie first */
-        let restoredPseudo: string | null = null;
+        /* Restore the server session cookie (auth required) */
         try {
           const r = await fetch("/api/auth/me", { cache: "no-store" });
           if (r.ok) {
@@ -300,23 +296,17 @@ export function RendezVousApp() {
             if (d.user) {
               setAuthUser(d.user);
               setPseudo(d.user.pseudo);
-              restoredPseudo = d.user.pseudo;
+              if (urlCode) { setScreen("join"); return; }
+              const savedMatch = localStorage.getItem(MATCH_KEY);
+              if (savedMatch) { await load(savedMatch); setScreen("match"); return; }
+              setScreen("home");
+              return;
             }
           }
         } catch { /* session cookie absent */ }
-
-        /* 2. Fall back to the legacy localStorage pseudo (guest mode) */
-        const savedPseudo = restoredPseudo ?? localStorage.getItem(PSEUDO_KEY);
-        if (!savedPseudo) {
-          setScreen(urlCode ? "auth" : "onboarding");
-          return;
-        }
-        if (!restoredPseudo) setPseudo(savedPseudo);
-        if (urlCode) { setScreen("join"); return; }
-        const savedMatch = localStorage.getItem(MATCH_KEY);
-        if (savedMatch) { await load(savedMatch); setScreen("match"); return; }
-        setScreen("home");
-      } catch { setScreen("home"); } finally { setLoading(false); refreshNotif(); }
+        /* No session → account screen (create/login) */
+        setScreen("auth");
+      } catch { setScreen("auth"); } finally { setLoading(false); refreshNotif(); }
     })();
   }, [load, refreshNotif]);
 
@@ -374,20 +364,6 @@ export function RendezVousApp() {
     : "";
 
   /* ── actions ── */
-  function saveP(name: string) {
-    const clean = name.trim().replace(/\s+/g, " ").slice(0, 40);
-    if (clean.length < 2) return notify("Choisis un pseudo d'au moins 2 caractères.");
-    localStorage.setItem(PSEUDO_KEY, clean);
-    setPseudo(clean);
-    setScreen(codeInput ? "join" : "home");
-  }
-
-  function goToAuth() {
-    setAuthMode("login");
-    setAuthError("");
-    setScreen("auth");
-  }
-
   async function createMatch(e: React.FormEvent) {
     e.preventDefault(); setSaving(true);
     try {
@@ -523,7 +499,7 @@ export function RendezVousApp() {
       {toast && <div className="anim-fade-up fixed left-1/2 top-20 z-[60] w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2"><div className="rounded-2xl border border-violet-500/25 bg-[#1a1626] px-4 py-3 text-center text-xs font-bold text-violet-200 shadow-2xl shadow-black/40">{toast}</div></div>}
 
       {/* Header */}
-      {screen !== "onboarding" && screen !== "auth" && (
+      {screen !== "auth" && (
         <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
@@ -545,30 +521,7 @@ export function RendezVousApp() {
 
       <main className="relative z-10 mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-5 py-8">
 
-        {/* ══ 1. ONBOARDING ══ */}
-        {screen === "onboarding" && (
-          <div className="anim-fade-up w-full space-y-8">
-            <div className="text-center">
-              <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-violet-600 shadow-2xl shadow-violet-600/30"><ChessPiece color="w" type="n" className="h-11 w-11 text-white" /></div>
-              <h1 className="mt-6 text-3xl font-black tracking-tight text-white">Joust</h1>
-              <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-[#6b6882]">Une partie d'échecs, à l'heure dite.</p>
-            </div>
-            <Card className="anim-fade-up-d1 p-6">
-              <form onSubmit={(e) => { e.preventDefault(); saveP(pseudoInput); }} className="space-y-4">
-                <Field label="Ton pseudo">
-                  <input value={pseudoInput} onChange={(e) => setPseudoInput(e.target.value)} maxLength={40} autoFocus placeholder="Lina" className={`${inputCls} text-center text-lg font-black`} />
-                </Field>
-                <p className="text-center text-[11px] leading-4 text-[#6b6882]">Joue en invité.</p>
-                <Btn type="submit" disabled={pseudoInput.trim().length < 2}>Continuer en invité</Btn>
-              </form>
-              <div className="mt-4 border-t border-white/[0.05] pt-4">
-                <Btn variant="secondary" onClick={goToAuth}><span className="inline-flex items-center gap-1.5"><UserPlus size={14} /> Créer un compte</span></Btn>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* ══ 1b. AUTH (register / login) ══ */}
+        {/* ══ 1. AUTH (register / login) ══ */}
         {screen === "auth" && (
           <div className="anim-fade-up w-full space-y-6">
             <div className="text-center">
@@ -596,7 +549,6 @@ export function RendezVousApp() {
                 <button type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }} className="w-full text-center text-xs font-bold text-violet-300 hover:text-violet-200">
                   {authMode === "login" ? "Pas de compte ? Inscris-toi" : "Déjà un compte ? Connecte-toi"}
                 </button>
-                <button type="button" onClick={() => setScreen(codeInput ? "join" : "onboarding")} className="mt-2 w-full text-center text-[11px] font-bold text-[#6b6882] hover:text-[#c4c0d4]">← Retour</button>
               </div>
             </Card>
           </div>
