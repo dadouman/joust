@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matchMoves, matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
+import { broadcastMatchChange } from "@/lib/realtime";
 import { notifyMatch } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
@@ -144,6 +145,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           ? `${gameWinner} gagne (${gameResult}).`
           : `Partie nulle (${gameResult}).`,
       );
+      broadcastMatchChange(id, { fen: chess.fen(), status: "completed" });
       return Response.json({ move: serializeMove(createdMove), match: serializeMatch(updated) });
     }
 
@@ -160,6 +162,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       .where(eq(matches.id, id))
       .returning();
 
+    broadcastMatchChange(id, { fen: chess.fen(), status: nextStatus });
     return Response.json({ move: serializeMove(createdMove), match: serializeMatch(updatedMatch) });
   } catch {
     return Response.json({ error: "Impossible d’enregistrer le coup." }, { status: 400 });

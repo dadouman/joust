@@ -12,6 +12,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "@types/qrcode": "^1.5.6",
     "@types/web-push": "^3.6.4",
     "chess.js": "^1.4.0",

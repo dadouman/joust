@@ -4,6 +4,7 @@ import { Chess, type Square } from "chess.js";
 import { ArrowLeft, Bell, Check, Copy, LogOut, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
+import { listenToMatch } from "@/lib/realtime-client";
 import { WEEKDAYS, computeNextOccurrence, describeRecurrence, formatDays, parseDays } from "@/lib/recurrence";
 import { TIME_CONTROLS, TIME_CONTROL_IDS, formatClock, tcInfo, type TimeControlId } from "@/lib/time-control";
 
@@ -316,9 +317,13 @@ export function RendezVousApp() {
   /* Polling de secours lent (8 s) — le quasi temps réel est fourni par SSE */
   useEffect(() => { if (!match || screen !== "match") return; const t = setInterval(() => void load(match.id), 8000); return () => clearInterval(t); }, [match?.id, screen, load]);
 
-  /* SSE — quasi temps réel (< 500 ms) : coup adverse, prêt, changement de statut => rechargement immédiat */
+  /* Temps réel — Supabase Realtime Broadcast si configuré, sinon SSE (< 500 ms).
+     Les deux déclenchent le même rechargement ; le SSE reste en filet de sécurité. */
   useEffect(() => {
-    if (!match || screen !== "match" || typeof EventSource === "undefined") return;
+    if (!match || screen !== "match") return;
+    const cleanupRealtime = listenToMatch(match.id, () => void load(match.id));
+
+    if (typeof EventSource === "undefined") return cleanupRealtime;
     let stopped = false;
     let es: EventSource | null = null;
     let retry: number | undefined;
@@ -340,6 +345,7 @@ export function RendezVousApp() {
 
     return () => {
       stopped = true;
+      cleanupRealtime();
       if (retry) window.clearTimeout(retry);
       es?.close();
     };

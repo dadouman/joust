@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matchMoves, matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
+import { broadcastMatchChange } from "@/lib/realtime";
 import { notifyMatch } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
@@ -108,6 +109,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
       notifyMatch(id, "👋 Un adversaire !", `${cleanName} a rejoint votre Joust.`);
+      broadcastMatchChange(id, { action: "join" });
       return Response.json({ match: serializeMatch(updated), moves: [] });
     }
 
@@ -121,6 +123,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
       notifyMatch(id, "🤝 Joust validée !", `${match.guestName || "Votre ami"} a accepté la joust.`);
+      broadcastMatchChange(id, { action: "accept" });
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -154,6 +157,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
       notifyMatch(id, "🔄 Nouvelle proposition", `${by === "guest" ? match.guestName : match.creatorName} propose d’autres paramètres.`);
+      broadcastMatchChange(id, { action: "counter" });
       return Response.json({ match: serializeMatch(updated) });
     }
 
