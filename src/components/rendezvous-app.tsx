@@ -19,6 +19,10 @@ type Match = {
   timeOfDay: string;
   recurrenceDays: string;
   inviteStatus: string;
+  /* Game abstraction: discriminates which adapter runs (chess today).
+     Adding a new game type requires no new match-shaped fields. */
+  gameType: string;
+  gameState: Record<string, unknown> | null;
   timeControl: string;
   timeControlBy: string;
   timeControlConfirmed: boolean;

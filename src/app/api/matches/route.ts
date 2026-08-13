@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
 import { db } from "@/db";
 import { matches } from "@/db/schema";
+import { isKnownGameType } from "@/lib/games";
 import { formatDays, isValidTimeOfDay, parseDays } from "@/lib/recurrence";
 import { serializeMatch } from "@/lib/serialize";
 import { isTimeControl } from "@/lib/time-control";
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
         : parseDays(typeof body.recurrenceDays === "string" ? body.recurrenceDays : ""),
     );
     const timeControl = isTimeControl(body.timeControl) ? body.timeControl : "blitz";
+    const gameType = isKnownGameType(body.gameType) ? body.gameType : "chess";
     const creatorName = cleanName(body.creatorName, "Joueur");
     const timeZone =
       typeof body.timeZone === "string" && body.timeZone.length <= 80 ? body.timeZone : "Europe/Paris";
@@ -67,6 +69,7 @@ export async function POST(request: NextRequest) {
         timeOfDay,
         recurrenceDays,
         inviteStatus: "pending",
+        gameType,
         timeControl,
         timeControlBy: "creator",
         timeControlConfirmed: false,

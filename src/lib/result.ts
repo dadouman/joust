@@ -29,8 +29,8 @@ export function buildPgn(match: MatchRow, moves: MoveRow[], result: string, winn
   return `${headers}\n\n${body.trim()}${suffix}`;
 }
 
-/** Persist win/loss/draw counts + PGN after a finished game. No Elo. */
-export async function persistResult(
+/** Persist win/loss/draw counts + PGN after a finished chess game. No Elo. */
+export async function persistChessResult(
   match: MatchRow,
   result: string,
   winner: string | null,
@@ -78,3 +78,6 @@ export async function persistResult(
 
   return updated ?? match;
 }
+
+/* Backward-compat alias: routes not yet migrated still call persistResult. */
+export { persistChessResult as persistResult };

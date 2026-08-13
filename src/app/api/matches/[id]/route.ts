@@ -3,11 +3,12 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matchMoves, matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
+import { getGame } from "@/lib/games";
 import { broadcastMatchChange } from "@/lib/realtime";
 import { notifyMatch } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
-import { isTimeControl, tcInfo } from "@/lib/time-control";
+import { isTimeControl } from "@/lib/time-control";
 
 export const dynamic = "force-dynamic";
 
@@ -18,15 +19,9 @@ async function findMatch(id: string) {
   return match;
 }
 
-async function startClocksIfNeeded(match: typeof matches.$inferSelect, now: Date) {
-  if (match.clockWhiteSeconds !== 0 || match.clockBlackSeconds !== 0) return match;
-  const seconds = tcInfo(match.timeControl).seconds;
-  const [updated] = await db
-    .update(matches)
-    .set({ clockWhiteSeconds: seconds, clockBlackSeconds: seconds, lastMoveAt: now, updatedAt: now })
-    .where(eq(matches.id, match.id))
-    .returning();
-  return updated ?? match;
+/** Start the game: delegate to the registered game adapter (chess initialises clocks). */
+async function startGame(match: typeof matches.$inferSelect, now: Date) {
+  return getGame(match.gameType).onGameStart(match, now);
 }
 
 const INTERVAL_MS = 1_000;
@@ -211,7 +206,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ status: "playing", updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      const withClocks = await startClocksIfNeeded(started, now);
+      const withClocks = await startGame(started, now);
       notifyMatch(id, "▶️ La partie est lancée !", "Rejoignez l'échiquier, votre adversaire vous attend.");
       return Response.json({ match: serializeMatch(withClocks ?? started) });
     }
