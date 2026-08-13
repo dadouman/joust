@@ -480,14 +480,28 @@ export function RendezVousApp() {
     try {
       const perm = await Notification.requestPermission();
       if (perm !== "granted") return notify("Refusé. Installe d'abord l'app (iOS 16.4+).");
-      const v = (await (await fetch("/api/push/vapid", { cache: "no-store" })).json()) as { publicKey: string };
+
+      const v = (await (await fetch("/api/push/vapid", { cache: "no-store" })).json()) as { publicKey?: string };
+      if (!v.publicKey) return notify("Erreur serveur : clé VAPID absente.");
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(v.publicKey) });
-      await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, subscription: sub.toJSON() }) });
-      setPushSubscribed(true); notify("🔔 Notifications activées !");
-      /* Valider le tuto : le fermer une fois l'abonnement réussi */
+
+      /* L'abonnement navigateur est réussi → on valide le tuto IMMÉDIATEMENT,
+         même si l'enregistrement côté serveur échoue juste après. */
+      setPushSubscribed(true);
       setTutorialOpen(false);
-    } catch { notify("Abonnement impossible."); }
+
+      /* Enregistrement côté serveur (BDD) — vérifier la réponse réelle. */
+      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, subscription: sub.toJSON() }) });
+      const d = (await r.json()).catch ? await (await r.json() as Promise<{ ok?: boolean; error?: string }>) : null;
+      if (r.ok) {
+        notify("🔔 Notifications activées !");
+      } else {
+        notify(`⚠️ Abonné mais non enregistré sur le serveur (${d?.error ?? r.status}).`);
+      }
+    } catch (err) {
+      notify("Abonnement impossible. Vérifie l'installation de l'app (PWA).");
+    }
   }
 
   /* Test push : envoie une notification de test à tous les appareils abonnés du duel. */
