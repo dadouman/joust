@@ -3,15 +3,22 @@ import { sendPushToMatch } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
 
+/* POST /api/push/test — envoie une notification push de test à tous les
+   appareils abonnés d'un match.
+   Body : { matchId, title?, body? } */
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { matchId?: string };
+    const body = (await request.json()) as {
+      matchId?: string;
+      title?: string;
+      body?: string;
+    };
     if (!body.matchId) return Response.json({ error: "matchId manquant." }, { status: 400 });
 
     const sent = await sendPushToMatch(
       body.matchId,
-      "🔔 Joust",
-      "Notifications activées !",
+      body.title?.slice(0, 80) ?? "🔔 Joust",
+      body.body?.slice(0, 200) ?? "Notifications activées !",
     );
 
     if (sent === 0) {

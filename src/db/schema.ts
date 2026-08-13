@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const matches = pgTable(
   "matches",
@@ -13,6 +13,7 @@ export const matches = pgTable(
     /* Short shareable code, e.g. "K7P2QX" */
     inviteCode: varchar("invite_code", { length: 8 }).notNull().unique(),
 
+    /* ── Alarm / rendez-vous definition (game-agnostic) ── */
     /* Next absolute occurrence of the alarm */
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
     timeZone: varchar("time_zone", { length: 80 }).notNull().default("Europe/Paris"),
@@ -25,31 +26,40 @@ export const matches = pgTable(
     /* Partner validation: pending | accepted | declined */
     inviteStatus: varchar("invite_status", { length: 16 }).notNull().default("pending"),
 
-    /* Time control: bullet | blitz | rapid — must be validated by both players */
+    /* ── Game abstraction ──
+       The alarm machinery (status, ready check, push) is game-agnostic.
+       `gameType` discriminates which adapter runs behind the match (chess today).
+       `gameState` holds the game-specific state as JSON so adding a new game
+       type does NOT require new columns on `matches`. */
+    gameType: varchar("game_type", { length: 32 }).notNull().default("chess"),
+    gameState: jsonb("game_state").$type<Record<string, unknown>>(),
+
+    /* Time control: bullet | blitz | rapid — must be validated by both players.
+       Generic for the alarm; the game adapter interprets it. */
     timeControl: varchar("time_control", { length: 16 }).notNull().default("blitz"),
     /* Who made the latest time-control proposal: creator | guest */
     timeControlBy: varchar("time_control_by", { length: 16 }).notNull().default("creator"),
     /* true once both players validated the current time control */
     timeControlConfirmed: boolean("time_control_confirmed").notNull().default(false),
 
-    /* Chess clocks (seconds remaining, frozen at the last move) */
-    clockWhiteSeconds: integer("clock_white_seconds").notNull().default(0),
-    clockBlackSeconds: integer("clock_black_seconds").notNull().default(0),
-    lastMoveAt: timestamp("last_move_at", { withTimezone: true }),
+    /* ── Ready check (game-agnostic): each player clicks "Prêt" once the
+       countdown expires. readyWhite / readyBlack : timestamp of the click, or null. */
+    readyWhite: timestamp("ready_white", { withTimezone: true }),
+    readyBlack: timestamp("ready_black", { withTimezone: true }),
 
     /* scheduled | playing | completed */
     status: varchar("status", { length: 24 }).notNull().default("scheduled"),
 
+    /* ── Legacy chess-specific columns ──
+       Kept for backward compatibility with the current chess implementation.
+       New game types should store their state in `gameState` instead. */
     whitePlayer: varchar("white_player", { length: 80 }).notNull(),
     blackPlayer: varchar("black_player", { length: 80 }).notNull(),
-
-    /* "ready check": each player clicks "Prêt" once the countdown expires.
-       readyWhite / readyBlack : timestamp of the click, or null.
-       A player has 1 minute from countdown-expiry to click. */
-    readyWhite: timestamp("ready_white", { withTimezone: true }),
-    readyBlack: timestamp("ready_black", { withTimezone: true }),
-
+    clockWhiteSeconds: integer("clock_white_seconds").notNull().default(0),
+    clockBlackSeconds: integer("clock_black_seconds").notNull().default(0),
+    lastMoveAt: timestamp("last_move_at", { withTimezone: true }),
     lastFen: text("last_fen"),
+    pgn: text("pgn"),
 
     /* ── Result persistence (review 3.2 §5) ── */
     result: varchar("result", { length: 24 }),
@@ -60,9 +70,6 @@ export const matches = pgTable(
     drawStatus: varchar("draw_status", { length: 16 }).notNull().default("none"),
     drawProposedBy: varchar("draw_proposed_by", { length: 16 }),
 
-    /* PGN final de la partie (persistance sans UI) */
-    pgn: text("pgn"),
-
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -70,6 +77,7 @@ export const matches = pgTable(
     index("matches_scheduled_at_idx").on(table.scheduledAt),
     index("matches_status_idx").on(table.status),
     index("matches_invite_status_idx").on(table.inviteStatus),
+    index("matches_game_type_idx").on(table.gameType),
   ],
 );
 
