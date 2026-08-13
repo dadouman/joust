@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, Check, Copy, LogOut, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Check, Copy, LogOut, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { listenToMatch } from "@/lib/realtime-client";
@@ -488,6 +488,22 @@ export function RendezVousApp() {
     } catch { notify("Abonnement impossible."); }
   }
 
+  /* Test push : envoie une notification de test à tous les appareils abonnés du duel. */
+  async function testPush() {
+    if (!match) return;
+    try {
+      setSaving(true);
+      const r = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchId: match.id, title: "🔔 Joust — Test", body: `Ceci est un test. Si tu vois ceci, tout fonctionne ! (${new Date().toLocaleTimeString("fr-FR")})` }),
+      });
+      const d = (await r.json()) as { ok?: boolean; sent?: number; error?: string };
+      if (d.ok) notify(`✅ Notification envoyée à ${d.sent} appareil(s).`);
+      else notify(d.error ?? "Envoi impossible.");
+    } catch { notify("Envoi impossible."); } finally { setSaving(false); }
+  }
+
   function leaveMatch() { localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); }
   function toggleDay(d: number) { setDays((c) => (c.includes(d) ? c.filter((x) => x !== d) : [...c, d])); }
 
@@ -537,6 +553,7 @@ export function RendezVousApp() {
               <span className="text-sm font-extrabold tracking-tight text-white">Joust</span>
             </div>
             <div className="flex items-center gap-2">
+              {match && pushSubscribed && <button type="button" onClick={() => void testPush()} aria-label="Tester la notification" title="Tester la notification push" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
               {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
               {pseudo && <div className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></div>}
               {authUser && <button type="button" onClick={() => void logout()} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}

@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "push:test": "tsx scripts/push-test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

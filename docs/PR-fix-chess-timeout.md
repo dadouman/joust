@@ -34,6 +34,18 @@ Quand le tick détecte `playing → completed`, la route broadcast la fin de par
 ### 3. Refactorisation jeu-agnostique (incluse)
 Le correctif vit dans la nouvelle abstraction `src/lib/games/` (adapter chess, alarm.ts) qui découple la machine d'état du jeu. Ce travail était en cours et porte le correctif.
 
+### 4. Correctif des notifications push
+Le service worker (`public/sw.js`) référençait `/manifest.webmanifest` et `/icons/icon-512.png` qui **n'existaient pas** dans `public/` → `cache.addAll(SHELL)` échouait → l'installation du service worker échouait → les notifications n'étaient jamais reçues.
+
+Fichiers ajoutés :
+- `public/manifest.webmanifest` (manifest PWA)
+- `public/icons/icon-192.png` et `public/icons/icon-512.png` (générés depuis `public/icon.svg`)
+
+### 5. Outils de test des notifications
+- **Bouton UI** : une icône `BellRing` apparaît dans le header à côté de la cloche quand on est abonné → envoie une notification de test au duel.
+- **CLI** : `npm run push:test <matchId> ["Titre"] ["Message"]` (`scripts/push-test.ts`)
+- **API** : `POST /api/push/test` (amélioré : titre + message personnalisables)
+
 ## Fichiers modifiés
 
 | Fichier | Type |
@@ -43,12 +55,47 @@ Le correctif vit dans la nouvelle abstraction `src/lib/games/` (adapter chess, a
 | `src/lib/alarm.ts`, `src/lib/games/` | Nouveaux (refactorisation) |
 | `src/app/api/matches/[id]/moves/route.ts`, `[id]/route.ts`, `matches/route.ts` | Modifiés |
 | `src/db/schema.ts`, `src/lib/result.ts`, `src/components/rendezvous-app.tsx` | Modifiés |
+| `public/manifest.webmanifest`, `public/icons/` | Nouveaux (PWA / notifications) |
+| `src/app/api/push/test/route.ts` | Modifié (titre/message personnalisables) |
+| `scripts/push-test.ts`, `package.json` | Nouveaux (CLI push:test) |
+| `docs/PR-fix-chess-timeout.md` | Nouveau (cette doc) |
 
 ## Vérifications effectuées
 
 - [x] `npx tsc --noEmit` — **aucune erreur**
 - [x] Tests manuels de la logique : partie avec `ready_black = NULL`, horloges initialisées → le tick déclenche `persistChessResult(match, "timeout", winner)`
 - [x] `.env` et `.vapid.json` correctement ignorés (aucun secret committé)
+
+## 🔔 Tester les notifications push
+
+### 1. Bouton dans l'app
+Une cloche avec un anneau (`BellRing`) apparaît dans le header **à côté de la cloche de notifications quand tu es abonné** au duel. Clique dessus → envoie une notification de test à tous les appareils abonnés du match.
+
+### 2. Ligne de commande (local ou Vercel)
+```bash
+# Depuis la racine du projet (nécessite DATABASE_URL + VAPID dans .env)
+npm run push:test <matchId> ["Titre"] ["Message"]
+
+# Exemple
+npm run push:test a114a055-370f-4d7e-92c1-47829b95f5ef
+npm run push:test a114a055-370f-4d7e-92c1-47829b95f5ef "🔔 Test" "Notifications OK !"
+```
+
+### 3. API REST (Vercel / Postman / curl)
+```bash
+curl -X POST https://<ton-domaine>/api/push/test \
+  -H "Content-Type: application/json" \
+  -d '{"matchId": "a114a055-370f-4d7e-92c1-47829b95f5ef", "title": "🔔 Test", "body": "Notifications OK !"}'
+```
+
+### 4. Vérification BDD — les abonnements existent-ils ?
+```sql
+-- Un abonné doit exister pour ce match
+SELECT * FROM push_subscriptions WHERE match_id = 'a114a055-370f-4d7e-92c1-47829b95f5ef';
+-- Si aucune ligne : personne n'a cliqué « Activer » dans l'app.
+```
+
+> ⚠️ **Important iOS 16.4+** : les notifications ne fonctionnent que si l'app est **installée sur l'écran d'accueil** et ouverte depuis cette icône (pas Safari classique).
 
 ## 🔧 PLAN D'ACTION DE MISE EN PRODUCTION (après merge)
 
@@ -66,9 +113,11 @@ Le correctif vit dans la nouvelle abstraction `src/lib/games/` (adapter chess, a
 
 3. **CI :** s'assurer que la pipeline (si configurée) passe sur le PR.
 
+4. **Tester les notifications :** suivre la section « 🔔 Tester les notifications push » ci-dessus.
+
 ### Étape 2 — Migration / réparation des parties bloquées
 
-Les parties **déjà bloquées** en `status=playing` avec un flag dépassé ne seront pas auto-réparées par le code seul au premier tick ? **Si** : dès qu'un client appelle `/tick` après déploiement, la partie sera clôturée. Mais pour nettoyer **immédiatement** la base :
+Les parties **déjà bloquées** en `status=playing` avec un flag dépassé seront clôturées automatiquement au premier `/tick` après déploiement. Pour nettoyer **immédiatement** la base :
 
 ```sql
 -- Marquer comme terminées les parties en cours dont le temps est écoulé
@@ -92,7 +141,7 @@ WHERE status = 'playing'
   );
 ```
 
-> ⚠️ **Note :** la colonne `winner_name` est appliquée en fonction du camp à jouer dans le FEN (`w` / `b`). Tester la requête sur un environnement de staging d'abord. Cette requête est un filet de sécurité : le correctif code fera le travail automatiquement pour les parties futures.
+> ⚠️ **Note :** la colonne `winner_name` est appliquée en fonction du camp à jouer dans le FEN (`w` / `b`). Tester la requête sur un environnement de staging d'abord.
 
 ### Étape 3 — Déploiement
 
@@ -127,4 +176,3 @@ WHERE status = 'playing'
 ---
 
 **Branch :** `fix/chess-clock-timeout-detection` → PR vers `main`
-**Commit :** `bc40826`
