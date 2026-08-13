@@ -476,31 +476,45 @@ export function RendezVousApp() {
   }
 
   async function enableNotifs() {
-    if (!match || typeof Notification === "undefined") return notify("Non supporté.");
+    if (!match) return;
+    if (typeof Notification === "undefined") {
+      setTutorialOpen(false);
+      return notify("Notifications non supportées par ce navigateur.");
+    }
     try {
       const perm = await Notification.requestPermission();
-      if (perm !== "granted") return notify("Refusé. Installe d'abord l'app (iOS 16.4+).");
+      if (perm !== "granted") {
+        /* Refusé (ou déjà refusé) : on ferme le tuto quand même — l'étape est terminée. */
+        setPushSubscribed(false);
+        setTutorialOpen(false);
+        return notify("Notifications refusées. Réactive-les dans les réglages du navigateur.");
+      }
 
       const v = (await (await fetch("/api/push/vapid", { cache: "no-store" })).json()) as { publicKey?: string };
-      if (!v.publicKey) return notify("Erreur serveur : clé VAPID absente.");
+      if (!v.publicKey) {
+        setTutorialOpen(false);
+        return notify("Erreur serveur : clé VAPID absente.");
+      }
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(v.publicKey) });
 
-      /* L'abonnement navigateur est réussi → on valide le tuto IMMÉDIATEMENT,
-         même si l'enregistrement côté serveur échoue juste après. */
+      /* L'abonnement navigateur est réussi → on valide le tuto IMMÉDIATEMENT. */
       setPushSubscribed(true);
       setTutorialOpen(false);
 
       /* Enregistrement côté serveur (BDD) — vérifier la réponse réelle. */
       const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, subscription: sub.toJSON() }) });
-      const d = (await r.json()).catch ? await (await r.json() as Promise<{ ok?: boolean; error?: string }>) : null;
+      const d = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (r.ok) {
         notify("🔔 Notifications activées !");
       } else {
         notify(`⚠️ Abonné mais non enregistré sur le serveur (${d?.error ?? r.status}).`);
       }
-    } catch (err) {
-      notify("Abonnement impossible. Vérifie l'installation de l'app (PWA).");
+    } catch {
+      /* Quoi qu'il arrive (Service Worker indisponible, abonnement interdit…), on ferme le tuto. */
+      setTutorialOpen(false);
+      setPushSubscribed(false);
+      notify("Abonnement impossible. Vérifie que l'app est installée (écran d'accueil).");
     }
   }
 
@@ -881,7 +895,7 @@ export function RendezVousApp() {
             <div className="mt-5 flex items-center gap-4 rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.05]">{[{ label: "Installée", done: standalone }, { label: "Notifications", done: pushSubscribed }].map((s) => <div key={s.label} className="flex items-center gap-2"><span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500 text-[#0a0f0a]" : "bg-white/[0.05] text-[#6b6882] ring-1 ring-white/[0.08]"}`}>{s.done ? <Check size={11} /> : "·"}</span><span className={`text-[10px] font-bold ${s.done ? "text-emerald-300" : "text-[#6b6882]"}`}>{s.label}</span></div>)}</div>
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Partage ton Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
             {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu'une fois l'app installée et ouverte depuis l'écran d'accueil (iOS 16.4+).</p></div>}
-            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed || (platform === "ios" && !standalone)} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
+            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
             <div className="mt-4 rounded-2xl bg-violet-600/[0.10] px-4 py-3 ring-1 ring-violet-500/20"><p className="text-xs text-violet-200 font-bold">Astuce : envoie le message copié, ou montre le QR pour inviter ton ami.</p></div>
             <div className="mt-5 border-t border-white/[0.05] pt-4"><Btn variant="ghost" onClick={() => setTutorialOpen(false)}>Plus tard</Btn></div>
           </div>
