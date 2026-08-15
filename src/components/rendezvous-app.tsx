@@ -164,26 +164,6 @@ export function RendezVousApp() {
   const prevWaitingRef = useRef(false);
   const platform = detectPlatform();
   const standalone = isStandalone();
-  /* Diagnostic navigateur pour iOS — affiché dans le tuto pour comprendre le blocage. */
-  const [diag, setDiag] = useState<Record<string, string>>({});
-  const buildDiag = useCallback(() => {
-    const d: Record<string, string> = {};
-    d["URL"] = typeof window !== "undefined" ? `${window.location.host}${window.location.pathname}` : "N/A";
-    d["Contexte sécurisé"] = typeof window !== "undefined" && window.isSecureContext ? "Oui (HTTPS)" : "NON (HTTP)";
-    d["Plateforme"] = platform;
-    d["Installée (PWA)"] = standalone ? "Oui" : "Non";
-    d["iOS 16.4+"] = platform === "ios" ? "Oui" : "N/A";
-    d["Notification API"] = typeof Notification !== "undefined" ? "Disponible" : "Absente";
-    d["Notification permission"] = typeof Notification !== "undefined" ? Notification.permission : "N/A";
-    d["Service Worker"] = "serviceWorker" in navigator ? "Disponible" : "Absent";
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.ready
-        .then((reg) => { d["SW état"] = "Actif"; d["PushManager"] = "pushManager" in reg ? "Oui" : "Non"; setDiag({ ...d }); })
-        .catch(() => { d["SW état"] = "Erreur/Non installé"; setDiag({ ...d }); });
-    }
-    setDiag({ ...d });
-  }, [platform, standalone]);
-  useEffect(() => { buildDiag(); }, [buildDiag]);
 
   /* create form */
   const [timeOfDay, setTimeOfDay] = useState("20:30");
@@ -491,14 +471,12 @@ export function RendezVousApp() {
          iPhones exige HTTPS même pour localhost — aucun contournement en HTTP. */
       if (typeof window !== "undefined" && window.location.protocol !== "https:") {
         setTutorialOpen(false);
-        console.warn("[push] Contexte non-HTTPS:", window.location.href);
         notify(`🔒 Les notifications iOS exigent HTTPS. URL actuelle : ${window.location.host} (${window.location.protocol}). Utilisez le déploiement en ligne HTTPS (ex. Vercel).`);
         return;
       }
       /* iOS 16.4+ : l'abonnement push n'est possible qu'en PWA installée (standalone). */
       if (platform === "ios" && !standalone) {
         setTutorialOpen(false);
-        console.warn("[push] iOS non-standalone");
         notify("📲 Installe d'abord Joust depuis Safari → Partager → « Sur l'écran d'accueil », puis réouvre l'app pour activer les notifications.");
         return;
       }
@@ -507,14 +485,12 @@ export function RendezVousApp() {
       if (perm !== "granted") {
         setPushSubscribed(false);
         setTutorialOpen(false);
-        console.warn("[push] Permission refusée");
         return notify("Notifications refusées. Réactive-les dans les réglages du navigateur.");
       }
 
       const v = (await (await fetch("/api/push/vapid", { cache: "no-store" })).json()) as { publicKey?: string };
       if (!v.publicKey) {
         setTutorialOpen(false);
-        console.warn("[push] Clé VAPID absente");
         return notify("Erreur serveur : clé VAPID absente.");
       }
 
@@ -530,7 +506,6 @@ export function RendezVousApp() {
 
       setPushSubscribed(true);
       setTutorialOpen(false);
-      console.log("[push] Abonnement navigateur réussi:", sub.endpoint.slice(0, 60));
 
       const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, notify5min: notify5minRef.current, subscription: sub.toJSON() }) });
       const d = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
@@ -539,19 +514,15 @@ export function RendezVousApp() {
         notify("🔔 Notifications activées !");
       } else {
         setServerPushSubscribed(false);
-        console.error("[push] Enregistrement serveur échoué:", r.status, d?.error);
         notify(`⚠️ Abonné mais non enregistré sur le serveur (${d?.error ?? r.status}).`);
       }
     } catch (err) {
       setTutorialOpen(false);
       setPushSubscribed(false);
-      console.error("[push] Échec abonnement:", err);
       const name = err instanceof Error ? err.name : "Inconnu";
       const msg = err instanceof Error ? err.message : String(err);
       if (name === "TimeoutError" || (err instanceof Error && err.message === "sw-timeout")) {
         notify("Service worker trop lent. Réessaie dans un instant.");
-      } else if (name === "NotAllowedError" || name === "SecurityError" || name === "TypeError") {
-        notify(`❌ ${name} : ${msg} — le push iOS exige HTTPS + app installée.`);
       } else {
         notify(`❌ Échec abonnement (${name}) : ${msg.slice(0, 120)}`);
       }
@@ -949,18 +920,6 @@ export function RendezVousApp() {
                 </span>
               </button>
             )}
-            <div className="mt-4 rounded-2xl bg-white/[0.02] p-3 ring-1 ring-white/[0.05]">
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Diagnostic</p>
-              <dl className="mt-2 space-y-1">
-                {Object.entries(diag).map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between gap-3">
-                    <dt className="text-[11px] font-bold text-[#6b6882]">{k}</dt>
-                    <dd className="text-[11px] font-mono font-bold text-[#c4c0d4]">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-              <button type="button" onClick={buildDiag} className="mt-2 w-full rounded-lg bg-white/[0.04] py-1.5 text-[10px] font-bold text-violet-300 ring-1 ring-white/[0.06] active:scale-95">Rafraîchir</button>
-            </div>
             <div className="mt-5 border-t border-white/[0.05] pt-4"><Btn variant="ghost" onClick={() => setTutorialOpen(false)}>Plus tard</Btn></div>
           </div>
         </div>
