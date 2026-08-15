@@ -60,6 +60,10 @@ export const matches = pgTable(
     arrivalNoticeCount: integer("arrival_notice_count").notNull().default(0),
     ultimatumSentAt: timestamp("ultimatum_sent_at", { withTimezone: true }),
     ultimatumDeadline: timestamp("ultimatum_deadline", { withTimezone: true }),
+    /* Who sent the ultimatum: "creator" | "guest" (either player may send one
+       to the player who has not yet validated their arrival). Legacy rows
+       (null) are treated as sent by the creator. */
+    ultimatumBy: varchar("ultimatum_by", { length: 16 }),
 
     /* ── 5-minute pre-game reminder (push) ── */
     reminder5SentAt: timestamp("reminder_5_sent_at", { withTimezone: true }),

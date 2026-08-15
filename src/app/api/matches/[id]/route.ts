@@ -177,13 +177,17 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     /* ── Arrival validation: player clicked "Je suis arrivé(e)" ──
-       Nouveau flow : pas de timer auto. Le créateur arrive → notifie l'invité.
-       Quand les deux arrivées sont validées, le match est lancé (via tick). */
+       Nouveau flow : pas de timer auto. La validation d'arrivée n'est possible
+       qu'à l'heure prévue de la joust (jamais avant). Quand les deux arrivées
+       sont validées, l'un des joueurs lance la partie explicitement (action start). */
     if (body.action === "arrive") {
       const denied = await requireActor();
       if (denied) return denied;
       if (match.status !== "scheduled" || match.inviteStatus !== "accepted" || !match.timeControlConfirmed) {
         return Response.json({ error: "La joust doit être validée pour valider ton arrivée." }, { status: 409 });
+      }
+      if (now.getTime() < match.scheduledAt.getTime()) {
+        return Response.json({ error: "La validation d'arrivée n'est possible qu'à l'heure prévue de la joust." }, { status: 409 });
       }
 
       const isCreator = playerName === match.creatorName;
@@ -214,18 +218,30 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return Response.json({ match: serializeMatch(updated) });
     }
 
-    /* ── Nudge: le créateur relance une notification à l'invité (1 min min. entre deux). ── */
+    /* ── Nudge: le joueur arrivé relance une notification à l'adversaire absent
+       (1 min min. entre deux). Aucun timer ne se déclenche automatiquement. */
     if (body.action === "nudge") {
       const denied = await requireActor();
       if (denied) return denied;
-      if (playerName !== match.creatorName) {
-        return Response.json({ error: "Seul le créateur peut relancer une notification." }, { status: 403 });
+      if (now.getTime() < match.scheduledAt.getTime()) {
+        return Response.json({ error: "La validation d'arrivée n'est possible qu'à l'heure prévue de la joust." }, { status: 409 });
       }
-      if (!match.arrivalCreator) {
+      const isCreator = playerName === match.creatorName;
+      const isGuest = playerName === match.guestName;
+      if (!isCreator && !isGuest) {
+        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
+      }
+      const iArrived = isCreator ? match.arrivalCreator : match.arrivalGuest;
+      if (!iArrived) {
         return Response.json({ error: "Valide d'abord ton arrivée pour relancer une notification." }, { status: 409 });
       }
-      if (!match.guestName) {
-        return Response.json({ error: "L'invité n'a pas encore rejoint la joust." }, { status: 409 });
+      const target = isCreator ? match.guestName : match.creatorName;
+      if (!target) {
+        return Response.json({ error: "L'adversaire n'a pas encore rejoint la joust." }, { status: 409 });
+      }
+      const targetArrived = isCreator ? match.arrivalGuest : match.arrivalCreator;
+      if (targetArrived) {
+        return Response.json({ error: "Ton adversaire a déjà validé son arrivée." }, { status: 409 });
       }
       /* 1 minute minimum entre deux relances. */
       if (match.arrivalNoticeSentAt && now.getTime() - match.arrivalNoticeSentAt.getTime() < 60_000) {
@@ -237,34 +253,52 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ arrivalNoticeSentAt: now, arrivalNoticeCount: (match.arrivalNoticeCount ?? 0) + 1, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyPlayer(id, match.guestName, "🔔 Rappel : ton adversaire t'attend !", `${match.creatorName} a validé son arrivée — clique pour valider la tienne et lancer la partie.`);
+      notifyPlayer(id, target, "🔔 Rappel : ton adversaire t'attend !", `${playerName} a validé son arrivée — clique pour valider la tienne et lancer la partie.`);
       broadcastMatchChange(id, { action: "nudge" });
       return Response.json({ match: serializeMatch(updated) });
     }
 
-    /* ── Ultimatum: le créateur donne 1 minute à l'invité, sinon forfait. ── */
+    /* ── Ultimatum: le joueur arrivé donne 1 minute à l'adversaire absent,
+       sinon forfait. C'est le SEUL mécanisme qui déclenche un décompte :
+       aucun timer ne part automatiquement. ── */
     if (body.action === "ultimatum") {
       const denied = await requireActor();
       if (denied) return denied;
-      if (playerName !== match.creatorName) {
-        return Response.json({ error: "Seul le créateur peut envoyer un ultimatum." }, { status: 403 });
+      if (now.getTime() < match.scheduledAt.getTime()) {
+        return Response.json({ error: "La validation d'arrivée n'est possible qu'à l'heure prévue de la joust." }, { status: 409 });
       }
-      if (!match.arrivalCreator) {
+      const isCreator = playerName === match.creatorName;
+      const isGuest = playerName === match.guestName;
+      if (!isCreator && !isGuest) {
+        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
+      }
+      const iArrived = isCreator ? match.arrivalCreator : match.arrivalGuest;
+      if (!iArrived) {
         return Response.json({ error: "Valide d'abord ton arrivée pour envoyer un ultimatum." }, { status: 409 });
+      }
+      const target = isCreator ? match.guestName : match.creatorName;
+      if (!target) {
+        return Response.json({ error: "L'adversaire n'a pas encore rejoint la joust." }, { status: 409 });
+      }
+      const targetArrived = isCreator ? match.arrivalGuest : match.arrivalCreator;
+      if (targetArrived) {
+        return Response.json({ error: "Ton adversaire a déjà validé son arrivée." }, { status: 409 });
       }
       if (match.ultimatumDeadline) {
         return Response.json({ error: "Un ultimatum est déjà en cours." }, { status: 409 });
       }
-      if (!match.guestName) {
-        return Response.json({ error: "L'invité n'a pas encore rejoint la joust." }, { status: 409 });
-      }
       const deadline = new Date(now.getTime() + 60_000);
       const [updated] = await db
         .update(matches)
-        .set({ ultimatumSentAt: now, ultimatumDeadline: deadline, updatedAt: now })
+        .set({
+          ultimatumSentAt: now,
+          ultimatumDeadline: deadline,
+          ultimatumBy: isCreator ? "creator" : "guest",
+          updatedAt: now,
+        })
         .where(eq(matches.id, id))
         .returning();
-      notifyPlayer(id, match.guestName, "⏳ ULTIMATUM — 1 minute !", `${match.creatorName} donne 1 minute pour te connecter et valider ton arrivée, sinon tu perds la partie.`);
+      notifyPlayer(id, target, "⏳ ULTIMATUM — 1 minute !", `${playerName} donne 1 minute pour te connecter et valider ton arrivée, sinon tu perds la partie.`);
       broadcastMatchChange(id, { action: "ultimatum" });
       return Response.json({ match: serializeMatch(updated) });
     }
@@ -302,6 +336,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       if (denied) return denied;
       if (match.inviteStatus !== "accepted" || !match.timeControlConfirmed) {
         return Response.json({ error: "Les deux joueurs doivent valider la joust." }, { status: 409 });
+      }
+      /* Pas de départ automatique : la partie ne peut être lancée qu'à l'heure
+         prévue ET une fois que les deux joueurs ont validé leur arrivée. */
+      if (now.getTime() < match.scheduledAt.getTime()) {
+        return Response.json({ error: "La joust ne peut commencer qu'à l'heure prévue." }, { status: 409 });
+      }
+      if (!match.arrivalCreator || !match.arrivalGuest) {
+        return Response.json({ error: "Les deux joueurs doivent avoir validé leur arrivée." }, { status: 409 });
       }
       const [started] = await db
         .update(matches)
@@ -402,6 +444,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           arrivalNoticeCount: 0,
           ultimatumSentAt: null,
           ultimatumDeadline: null,
+          ultimatumBy: null,
           reminder5SentAt: null,
           drawStatus: "none",
           drawProposedBy: null,
@@ -441,6 +484,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           arrivalNoticeCount: 0,
           ultimatumSentAt: null,
           ultimatumDeadline: null,
+          ultimatumBy: null,
           reminder5SentAt: null,
           whitePlayer: match.blackPlayer,
           blackPlayer: match.whitePlayer,

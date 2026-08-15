@@ -33,7 +33,9 @@ type Match = {
   arrivalGuest: string | null;
   arrivalNoticeSentAt: string | null;
   arrivalNoticeCount: number;
+  ultimatumSentAt: string | null;
   ultimatumDeadline: string | null;
+  ultimatumBy: string | null;
   status: string;
   whitePlayer: string;
   blackPlayer: string;
@@ -274,27 +276,21 @@ export function RendezVousApp() {
   const bothArrived = Boolean(match?.arrivalCreator && match?.arrivalGuest);
   const arrivalCheckActive = Boolean(isArmed && !matchOver);
   const ultimatumActive = Boolean(match?.ultimatumDeadline);
+  const ultimatumByMe = match ? (match.ultimatumBy ?? "creator") === (iAmCreator ? "creator" : "guest") : false;
+  const ultimatumAgainstMe = Boolean(match?.ultimatumDeadline) && !ultimatumByMe;
   const ultimatumDeadlineLeft = match?.ultimatumDeadline ? Math.max(0, Math.floor((new Date(match.ultimatumDeadline).getTime() - now) / 1000)) : 0;
   const nudgeCooldownLeft = match?.arrivalNoticeSentAt ? Math.max(0, 60 - Math.floor((now - new Date(match.arrivalNoticeSentAt).getTime()) / 1000)) : 0;
   const isOver = chess.isGameOver() || matchOver;
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
   const timeLeft = match ? new Date(match.scheduledAt).getTime() - now : 0;
+  /* La validation d'arrivée n'est débloquée qu'à l'heure prévue de la joust
+     (jamais avant). Aucun timer ne se déclenche automatiquement. */
+  const arrivalUnlocked = Boolean(isArmed && !matchOver && timeLeft <= 0);
 
   const lastProposalByMe = match ? (iAmCreator ? match.timeControlBy === "creator" : match.timeControlBy === "guest") : false;
   const iMustAnswer = Boolean(match && hasOpponent && !accepted && !lastProposalByMe);
   const waitingOnOpponent = Boolean(match && hasOpponent && !accepted && lastProposalByMe);
-
-  const iAmReady = match ? (isWhite ? Boolean(match.readyWhite) : Boolean(match.readyBlack)) : false;
-  const oppReady = match ? (isWhite ? Boolean(match.readyBlack) : Boolean(match.readyWhite)) : false;
-  const readyDeadline = useMemo(() => {
-    if (!match) return 0;
-    const base = new Date(match.scheduledAt).getTime();
-    const first = match.readyWhite ? new Date(match.readyWhite).getTime() : match.readyBlack ? new Date(match.readyBlack).getTime() : base;
-    return first + 60_000;
-  }, [match]);
-  const readySecondsLeft = Math.max(0, Math.floor((readyDeadline - now) / 1000));
-  const readyCheckActive = Boolean(isPlaying && !matchOver);
 
   const myTurn = chessStarted && chess.turn() === myColor;
   const clockOf = useCallback((color: "w" | "b") => {
@@ -973,92 +969,90 @@ export function RendezVousApp() {
               <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d'autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div></Card></div>
             )}
 
-            {/* — arrival check (nouveau flow : pas de timer auto) — */}
+            {/* — arrival check (nouveau flow : pas de timer auto) —
+               La validation d'arrivée n'est possible qu'à l'heure prévue de la
+               joust (jamais avant). Aucun chronomètre ne se déclenche
+               automatiquement : seul l'ultimatum (envoi manuel par un joueur
+               arrivé) déclenche un décompte. Le départ est toujours manuel. */}
             {arrivalCheckActive && (
               <div className="anim-fade-up space-y-5">
                 <div className="text-center">
-                  <Badge tone={bothArrived ? "ok" : "accent"}><Dot on /> Validation d'arrivée</Badge>
+                  <Badge tone={!arrivalUnlocked ? "warn" : bothArrived ? "ok" : "accent"}><Dot on /> {arrivalUnlocked ? "Validation d'arrivée" : "Prochaine joust"}</Badge>
                   <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
                   <p className="mt-1.5 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p>
                 </div>
-                <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                  <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
-                    <div className="flex flex-col items-center gap-3 px-3 py-6">
-                      <Avatar name={match.creatorName} tone="a" />
-                      <p className="text-[11px] font-extrabold text-white">{match.creatorName === pseudo ? "Toi" : match.creatorName}</p>
-                      <Badge tone={Boolean(match.arrivalCreator) ? "ok" : "warn"}>{match.arrivalCreator ? "Arrivé ✓" : "…"}</Badge>
-                    </div>
-                    <div className="flex flex-col items-center gap-3 bg-white/[0.02] px-3 py-6">
-                      <Avatar name={match.guestName} tone="b" />
-                      <p className="text-[11px] font-extrabold text-white">{match.guestName === pseudo ? "Toi" : match.guestName}</p>
-                      <Badge tone={Boolean(match.arrivalGuest) ? "ok" : "warn"}>{match.arrivalGuest ? "Arrivé ✓" : "…"}</Badge>
-                    </div>
-                  </div>
-                  <div className="border-t border-white/[0.05] px-5 pb-6 pt-4 text-center">
-                    {!iAmArrived ? (
-                      <>
-                        <p className="text-[11px] leading-5 text-[#6b6882]">Quand tu arrives, valide ton arrivée pour lancer la joust.</p>
-                        <div className="mt-4"><Btn variant="giant" disabled={saving} onClick={() => void patch({ action: "arrive", playerName: pseudo }, "Arrivée validée !")}><span className="inline-flex items-center gap-2"><Zap size={20} /> Je suis arrivé(e)</span></Btn></div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="rounded-2xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — tu attends {opponentName}…</p></div>
-                        {!oppArrived && iAmCreator && (
-                          <>
-                            {ultimatumActive ? (
-                              <div className="mt-4 rounded-2xl bg-rose-500/[0.08] px-4 py-4 ring-1 ring-rose-500/30">
-                                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">Ultimatum en cours</p>
-                                <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
-                                <p className="mt-2 text-[11px] text-rose-200/80">{opponentName} a 1 minute pour valider son arrivée, sinon il perd la partie.</p>
-                              </div>
-                            ) : (
-                              <div className="mt-4 space-y-2">
-                                <Btn variant="secondary" disabled={saving || nudgeCooldownLeft > 0} onClick={() => void patch({ action: "nudge", playerName: pseudo }, nudgeCooldownLeft > 0 ? `Relance possible dans ${nudgeCooldownLeft}s` : "Notification relancée !")}>
-                                  {nudgeCooldownLeft > 0 ? `Relayer dans ${nudgeCooldownLeft}s…` : "🔔 Relancer une notification"}
-                                </Btn>
-                                <Btn variant="danger" disabled={saving} onClick={() => void patch({ action: "ultimatum", playerName: pseudo }, "Ultimatum envoyé !")}>
-                                  ⏳ Envoyer un ultimatum (1 min)
-                                </Btn>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {!oppArrived && iAmGuest && (
-                          <div className="mt-4 rounded-2xl bg-amber-500/[0.06] px-4 py-3 ring-1 ring-amber-500/20">
-                            <p className="text-xs font-bold text-amber-200">En attente de {opponentName}…</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {bothArrived && (
-                      <div className="mt-4 rounded-2xl bg-emerald-500/[0.1] px-4 py-4 ring-1 ring-emerald-500/30">
-                        <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés !</p>
-                        <p className="mt-2 text-xs font-bold text-emerald-200/80">La partie démarre…</p>
-                        <div className="mt-4"><Btn disabled={saving} onClick={() => void load(match.id)}>Lancer la partie</Btn></div>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-                <Btn variant="ghost" onClick={leaveMatch}>Annuler la joust</Btn>
-              </div>
-            )}
 
-            {/* — ready check (legacy, gardé pour compatibilité) — */}
-            {readyCheckActive && (
-              <div className="anim-fade-up space-y-5">
-                <div className="text-center"><Badge tone="accent"><Dot on /> C'est l'heure !</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2><p className="mt-1.5 text-xs font-bold text-violet-300">{tc.label} · {tc.tag}</p></div>
-                <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                  <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
-                    <div className="flex flex-col items-center gap-3 px-3 py-6"><Avatar name={pseudo} tone="a" /><p className="text-[11px] font-extrabold text-white">Toi</p><Badge tone={iAmReady ? "ok" : "warn"}>{iAmReady ? "Prêt" : "…"}</Badge></div>
-                    <div className="flex flex-col items-center gap-3 bg-white/[0.02] px-3 py-6"><Avatar name={opponentName} tone="b" /><p className="text-[11px] font-extrabold text-white">{opponentName}</p><Badge tone={oppReady ? "ok" : "warn"}>{oppReady ? "Prêt" : "…"}</Badge></div>
-                  </div>
-                  <div className="border-t border-white/[0.05] px-5 pb-6 pt-4 text-center">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Temps pour valider</p>
-                    <div className="mt-2 font-mono text-4xl font-black text-white">0:<span className={readySecondsLeft <= 15 ? "text-rose-400" : "text-violet-400"}>{String(readySecondsLeft).padStart(2, "0")}</span></div>
-                    <div className="mt-5"><Btn variant={iAmReady ? "secondary" : "giant"} disabled={iAmReady || saving} onClick={() => void patch({ action: "ready", playerName: pseudo })}>{iAmReady ? "Prêt ✓ — en attente" : <span className="inline-flex items-center gap-2"><Zap size={22} /> Prêt</span>}</Btn></div>
-                    {!iAmReady && <p className="mt-2 text-[11px] text-[#6b6882]">Départ dès que vous êtes deux, ou dans {readySecondsLeft}s.</p>}
-                  </div>
-                </Card>
+                {!arrivalUnlocked ? (
+                  <Card className="anim-fade-up-d1 p-6 text-center">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">La validation d'arrivée sera possible à l'heure prévue</p>
+                    <p className="mt-3 font-mono text-4xl font-black text-white">
+                      {(() => { const s = Math.max(0, Math.floor(timeLeft / 1000)); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`; })()}
+                    </p>
+                    <p className="mt-2 text-[11px] text-[#6b6882]">Aucun chronomètre ne se déclenche automatiquement — chaque joueur validera son arrivée à l'heure H, puis la partie sera lancée manuellement.</p>
+                  </Card>
+                ) : (
+                  <Card className="anim-fade-up-d1 overflow-hidden p-0">
+                    <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
+                      <div className="flex flex-col items-center gap-3 px-3 py-6">
+                        <Avatar name={match.creatorName} tone="a" />
+                        <p className="text-[11px] font-extrabold text-white">{match.creatorName === pseudo ? "Toi" : match.creatorName}</p>
+                        <Badge tone={Boolean(match.arrivalCreator) ? "ok" : "warn"}>{match.arrivalCreator ? "Arrivé ✓" : "…"}</Badge>
+                      </div>
+                      <div className="flex flex-col items-center gap-3 bg-white/[0.02] px-3 py-6">
+                        <Avatar name={match.guestName} tone="b" />
+                        <p className="text-[11px] font-extrabold text-white">{match.guestName === pseudo ? "Toi" : match.guestName}</p>
+                        <Badge tone={Boolean(match.arrivalGuest) ? "ok" : "warn"}>{match.arrivalGuest ? "Arrivé ✓" : "…"}</Badge>
+                      </div>
+                    </div>
+                    <div className="border-t border-white/[0.05] px-5 pb-6 pt-4 text-center">
+                      {!iAmArrived ? (
+                        <>
+                          <p className="text-[11px] leading-5 text-[#6b6882]">Quand tu arrives, valide ton arrivée pour lancer la joust.</p>
+                          {ultimatumAgainstMe && (
+                            <div className="mt-4 rounded-2xl bg-rose-500/[0.1] px-4 py-4 ring-1 ring-rose-500/30">
+                              <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">⏳ Ultimatum de {opponentName}</p>
+                              <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
+                              <p className="mt-2 text-[11px] text-rose-200/80">Valide ton arrivée avant la fin du décompte, sinon tu perds par forfait.</p>
+                            </div>
+                          )}
+                          <div className="mt-4"><Btn variant="giant" disabled={saving} onClick={() => void patch({ action: "arrive", playerName: pseudo }, "Arrivée validée !")}><span className="inline-flex items-center gap-2"><Zap size={20} /> Je suis arrivé(e)</span></Btn></div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="rounded-2xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — tu attends {opponentName}…</p></div>
+                          {!oppArrived && (
+                            <>
+                              {ultimatumActive ? (
+                                <div className="mt-4 rounded-2xl bg-rose-500/[0.08] px-4 py-4 ring-1 ring-rose-500/30">
+                                  <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">Ultimatum en cours</p>
+                                  <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
+                                  <p className="mt-2 text-[11px] text-rose-200/80">{ultimatumByMe ? `${opponentName} a 1 minute pour valider son arrivée, sinon il perd la partie.` : `${opponentName} t'a envoyé un ultimatum — valide ton arrivée immédiatement.`}</p>
+                                </div>
+                              ) : (
+                                <div className="mt-4 space-y-2">
+                                  <Btn variant="secondary" disabled={saving || nudgeCooldownLeft > 0} onClick={() => void patch({ action: "nudge", playerName: pseudo }, nudgeCooldownLeft > 0 ? `Relance possible dans ${nudgeCooldownLeft}s` : "Notification relancée !")}>
+                                    {nudgeCooldownLeft > 0 ? `Relayer dans ${nudgeCooldownLeft}s…` : "🔔 Relancer une notification"}
+                                  </Btn>
+                                  <Btn variant="danger" disabled={saving} onClick={() => void patch({ action: "ultimatum", playerName: pseudo }, "Ultimatum envoyé !")}>
+                                    ⏳ Envoyer un ultimatum (1 min)
+                                  </Btn>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                      {bothArrived && (
+                        <div className="mt-4 rounded-2xl bg-emerald-500/[0.1] px-4 py-4 ring-1 ring-emerald-500/30">
+                          <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés !</p>
+                          <p className="mt-2 text-xs font-bold text-emerald-200/80">Aucun départ automatique — lance la partie à la main.</p>
+                          <div className="mt-4"><Btn disabled={saving} onClick={() => void patch({ action: "start", playerName: pseudo }, "La partie est lancée !")}>Lancer la partie</Btn></div>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+                <Btn variant="ghost" onClick={leaveMatch}>Annuler la joust</Btn>
               </div>
             )}
 
