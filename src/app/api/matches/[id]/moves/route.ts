@@ -10,7 +10,7 @@ import { matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
 import { getGame } from "@/lib/games";
 import { broadcastMatchChange } from "@/lib/realtime";
-import { notifyMatch } from "@/lib/push";
+import { notifyMatch, notifyPlayer } from "@/lib/push";
 import { serializeMatch } from "@/lib/serialize";
 
 export const dynamic = "force-dynamic";
@@ -67,18 +67,20 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       const serialized = serializeMatch(result.match);
       const update = result.update ?? {};
 
-      /* Notifications for known chess outcomes. */
-      if (update.result === "timeout") {
-        notifyMatch(id, "⏱️ Temps écoulé !", `${update.winnerName} gagne — partie terminée.`);
+      /* Notifications for known chess outcomes — targeted to the affected player only. */
+      if (update.result === "timeout" && update.winnerName) {
+        const loser = update.winnerName === result.match.whitePlayer ? result.match.blackPlayer : result.match.whitePlayer;
+        if (loser) notifyPlayer(id, loser, "⏱️ Temps écoulé !", `${update.winnerName} gagne — partie terminée.`);
       }
       if (update.status === "completed" && update.result && update.result !== "timeout") {
-        notifyMatch(
-          id,
-          update.winnerName ? "♛ Échec et mat !" : "🤝 Partie nulle",
-          update.winnerName
-            ? `${update.winnerName} gagne (${update.result}).`
-            : `Partie nulle (${update.result}).`,
-        );
+        if (update.winnerName) {
+          /* Échec et mat : seul le perdant est notifié (le gagnant vient de jouer). */
+          const loser = update.winnerName === result.match.whitePlayer ? result.match.blackPlayer : result.match.whitePlayer;
+          if (loser) notifyPlayer(id, loser, "♛ Échec et mat !", `${update.winnerName} gagne (${update.result}).`);
+        } else {
+          /* Nulle : les deux joueurs sont concernés → notification au match. */
+          notifyMatch(id, "🤝 Partie nulle", `Partie nulle (${update.result}).`);
+        }
       }
 
       if (update.status) {

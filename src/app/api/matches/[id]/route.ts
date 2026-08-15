@@ -5,7 +5,7 @@ import { matchMoves, matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
 import { getGame } from "@/lib/games";
 import { broadcastMatchChange } from "@/lib/realtime";
-import { notifyMatch, notifyPlayer } from "@/lib/push";
+import { notifyPlayer } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
 import { isTimeControl } from "@/lib/time-control";
@@ -120,9 +120,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ inviteStatus: "accepted", timeControlConfirmed: true, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      /* Réponse à une proposition : le partenaire a validé → notifier l'autre joueur */
+      /* Réponse à une proposition : le partenaire a validé → notifier uniquement le proposant */
       notifyPlayer(id, proposer || match.creatorName, "✅ Proposition acceptée !", `${responder} a validé les paramètres de la joust.`);
-      notifyMatch(id, "🤝 Joust validée !", `${match.guestName || "Votre ami"} a accepté la joust.`);
       broadcastMatchChange(id, { action: "accept" });
       return Response.json({ match: serializeMatch(updated) });
     }
@@ -160,7 +159,6 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .returning();
       /* Réponse à une proposition : contre-proposition → notifier le partenaire ciblé */
       if (target) notifyPlayer(id, target, "🔄 Contre-proposition", `${proposer} propose d’autres paramètres.`);
-      notifyMatch(id, "🔄 Nouvelle proposition", `${proposer} propose d’autres paramètres.`);
       broadcastMatchChange(id, { action: "counter" });
       return Response.json({ match: serializeMatch(updated) });
     }
@@ -174,7 +172,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ inviteStatus: "declined", updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "😔 Invitation refusée", `${match.guestName} a décliné la joust.`);
+      notifyPlayer(id, match.creatorName, "😔 Invitation refusée", `${match.guestName} a décliné la joust.`);
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -199,10 +197,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
 
-      /* « Adversaire prêt » → notifier l'autre joueur */
+      /* « Adversaire prêt » → notifier uniquement l'autre joueur (jamais celui qui a cliqué) */
       const targetReady = isWhitePlayer ? match.blackPlayer : match.whitePlayer;
       if (targetReady) notifyPlayer(id, targetReady, "✅ Ton adversaire est prêt !", `${playerName} est prêt à jouer — à toi de valider.`);
-      notifyMatch(id, "✅ Prêt !", `${playerName} est prêt à jouer.`);
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -219,7 +216,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
       const withClocks = await startGame(started, now);
-      notifyMatch(id, "▶️ La partie est lancée !", "Rejoignez l'échiquier, votre adversaire vous attend.");
+      /* Seul l'adversaire doit être prévenu du lancement (le lanceur est sur l'écran). */
+      const otherPlayer = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
+      if (otherPlayer) notifyPlayer(id, otherPlayer, "▶️ La partie est lancée !", "Rejoignez l'échiquier, votre adversaire vous attend.");
       return Response.json({ match: serializeMatch(withClocks ?? started) });
     }
 
@@ -229,7 +228,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       if (denied) return denied;
       const winner = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
       const updated = await persistResult(match, "resign", winner);
-      notifyMatch(id, "🏳️ Abandon", `${playerName} a abandonné. ${winner} gagne.`);
+      /* Seul le gagnant doit être notifié (le resigneur vient de cliquer). */
+      notifyPlayer(id, winner, "🏳️ Abandon", `${playerName} a abandonné. Vous gagnez.`);
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -246,7 +246,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ drawStatus: "proposed", drawProposedBy: by, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "🤝 Proposition de nulle", `${playerName} propose la nulle.`);
+      /* Pas de notification push pendant la partie : l'état est propagé en temps réel
+         (SSE / broadcast), l'adversaire connecté verra la proposition à l'écran. */
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -259,7 +260,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
       }
       const updated = await persistResult(match, "agreed", null);
-      notifyMatch(id, "🤝 Partie nulle", "Les deux joueurs sont d'accord — nulle.");
+      /* Seul le proposeur doit être notifié que sa nulle a été acceptée. */
+      const acceptTarget = match.drawProposedBy === "creator" ? match.creatorName : match.guestName;
+      if (acceptTarget) notifyPlayer(id, acceptTarget, "🤝 Partie nulle", `${playerName} a accepté la nulle.`);
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -276,7 +279,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ drawStatus: "declined", updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "❌ Nulle refusée", `${playerName} a refusé la proposition de nulle.`);
+      /* Pas de notification push pendant la partie : le proposeur connecté
+         verra le refus à l'écran via la mise à jour en temps réel. */
       return Response.json({ match: serializeMatch(updated) });
     }
 

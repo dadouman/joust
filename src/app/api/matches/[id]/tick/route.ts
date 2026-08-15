@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matches } from "@/db/schema";
 import { advanceAlarm } from "@/lib/alarm";
-import { notifyMatch } from "@/lib/push";
+import { notifyPlayer } from "@/lib/push";
 import { broadcastMatchChange } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,9 @@ export async function POST(_request: NextRequest, { params }: RouteContext) {
       winnerName: updated.winnerName,
     });
     if (updated.result === "timeout" && updated.winnerName) {
-      notifyMatch(id, "⏱️ Temps écoulé !", `${updated.winnerName} gagne — partie terminée.`);
+      /* Seul le perdant doit être notifié (l'autre joueur a gagné et est sur l'écran). */
+      const loser = updated.winnerName === updated.whitePlayer ? updated.blackPlayer : updated.whitePlayer;
+      if (loser) notifyPlayer(id, loser, "⏱️ Temps écoulé !", `${updated.winnerName} gagne — partie terminée.`);
     }
   }
 
