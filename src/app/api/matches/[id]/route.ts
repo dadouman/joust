@@ -228,8 +228,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       if (denied) return denied;
       const winner = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
       const updated = await persistResult(match, "resign", winner);
-      /* Seul le gagnant doit être notifié (le resigneur vient de cliquer). */
-      notifyPlayer(id, winner, "🏳️ Abandon", `${playerName} a abandonné. Vous gagnez.`);
+      /* Pas de notification push : la victoire/défaite est affichée à l'écran
+         via la mise à jour en temps réel (SSE / broadcast). */
       return Response.json({ match: serializeMatch(updated) });
     }
 
@@ -260,9 +260,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
       }
       const updated = await persistResult(match, "agreed", null);
-      /* Seul le proposeur doit être notifié que sa nulle a été acceptée. */
-      const acceptTarget = match.drawProposedBy === "creator" ? match.creatorName : match.guestName;
-      if (acceptTarget) notifyPlayer(id, acceptTarget, "🤝 Partie nulle", `${playerName} a accepté la nulle.`);
+      /* Pas de notification push : la fin de partie (nulle) est affichée à l'écran
+         via la mise à jour en temps réel (SSE / broadcast). */
       return Response.json({ match: serializeMatch(updated) });
     }
 

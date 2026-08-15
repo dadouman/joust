@@ -7,7 +7,6 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { matches } from "@/db/schema";
 import { advanceAlarm } from "@/lib/alarm";
-import { notifyPlayer } from "@/lib/push";
 import { broadcastMatchChange } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
@@ -23,19 +22,16 @@ export async function POST(_request: NextRequest, { params }: RouteContext) {
   const updated = await advanceAlarm(match, now);
 
   /* Timeout détecté par le tick (perte au temps) : propager la fin de partie.
-     Le SSE le fera aussi via updatedAt, mais ce broadcast + push rend la fin
-     immédiate et notifie les joueurs comme le font déjà les routes PATCH/moves. */
+     Le broadcast rend la fin immédiate pour les deux joueurs ; le résultat
+     est affiché à l'écran (card de fin de partie) — pas de push ici. */
   if (updated.status === "completed" && match.status !== "completed") {
     broadcastMatchChange(id, {
       status: updated.status,
       result: updated.result,
       winnerName: updated.winnerName,
     });
-    if (updated.result === "timeout" && updated.winnerName) {
-      /* Seul le perdant doit être notifié (l'autre joueur a gagné et est sur l'écran). */
-      const loser = updated.winnerName === updated.whitePlayer ? updated.blackPlayer : updated.whitePlayer;
-      if (loser) notifyPlayer(id, loser, "⏱️ Temps écoulé !", `${updated.winnerName} gagne — partie terminée.`);
-    }
+    /* Pas de notification push pour le timeout : le résultat est affiché à l'écran
+       via la mise à jour en temps réel (SSE / broadcast). */
   }
 
   return Response.json({ ok: true, status: updated.status });

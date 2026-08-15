@@ -154,6 +154,7 @@ export function RendezVousApp() {
   const [promotionPending, setPromotionPending] = useState<{ from: string; to: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [drawModalOpen, setDrawModalOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [serverPushSubscribed, setServerPushSubscribed] = useState<boolean | null>(null);
@@ -355,6 +356,17 @@ export function RendezVousApp() {
     }
   }, [match?.inviteStatus, match?.timeControlConfirmed, pushSubscribed, tutorialOpen]);
   useEffect(() => setSelectedSquare(null), [match?.lastFen]);
+
+  /* Popup de proposition de nulle : s'ouvre automatiquement quand l'adversaire propose. */
+  useEffect(() => {
+    if (match?.drawStatus === "proposed" && match.drawProposedBy !== (iAmCreator ? "creator" : "guest") && chessStarted && !isOver) {
+      setDrawModalOpen(true);
+    }
+  }, [match?.drawStatus, match?.drawProposedBy, iAmCreator, chessStarted, isOver]);
+  /* La popup se referme quand la proposition est traitée ou la partie finie. */
+  useEffect(() => {
+    if (!chessStarted || isOver || match?.drawStatus !== "proposed") setDrawModalOpen(false);
+  }, [chessStarted, isOver, match?.drawStatus]);
 
   /* Notification visuelle quand l'adversaire modifie la proposition. */
   useEffect(() => {
@@ -827,9 +839,7 @@ export function RendezVousApp() {
                   <div className="grid grid-cols-2 gap-2">
                     <Btn variant="danger" onClick={() => void patch({ action: "resign", playerName: pseudo })} disabled={saving}>Abandonner</Btn>
                     {match.drawStatus === "proposed"
-                      ? (match.drawProposedBy === (iAmCreator ? "creator" : "guest")
-                          ? <Btn variant="secondary" disabled>En attente…</Btn>
-                          : <Btn variant="secondary" onClick={() => void patch({ action: "draw-accept", playerName: pseudo }, "Nulle acceptée !")} disabled={saving}>Accepter la nulle</Btn>)
+                      ? <Btn variant="secondary" disabled>{match.drawProposedBy === (iAmCreator ? "creator" : "guest") ? "En attente…" : "Proposition de nulle…"}</Btn>
                       : <Btn variant="secondary" onClick={() => void patch({ action: "draw", playerName: pseudo }, "Proposition de nulle envoyée")} disabled={saving}>Proposer la nulle</Btn>}
                   </div>
                 )}
@@ -890,6 +900,20 @@ export function RendezVousApp() {
               ))}
             </div>
             <p className="mt-3 text-[11px] text-[#6b6882]">Dame (D), Tour (T), Fou (F), Cavalier (C)</p>
+          </div>
+        </div>
+      )}
+
+      {/* Popup proposition de nulle */}
+      {drawModalOpen && match && (
+        <div className="fixed inset-0 z-[56] grid place-items-center bg-black/80 p-5 backdrop-blur-sm">
+          <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl">
+            <Badge tone="warn">Proposition de nulle</Badge>
+            <p className="mt-3 text-sm font-black text-white">{opponentName} propose la nulle.</p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <Btn variant="secondary" onClick={() => void patch({ action: "draw-decline", playerName: pseudo }, "Nulle refusée")} disabled={saving}>Refuser</Btn>
+              <Btn onClick={() => void patch({ action: "draw-accept", playerName: pseudo }, "Nulle acceptée !")} disabled={saving}>Accepter</Btn>
+            </div>
           </div>
         </div>
       )}
