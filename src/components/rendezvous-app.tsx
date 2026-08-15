@@ -29,6 +29,11 @@ type Match = {
   lastMoveAt: string | null;
   readyWhite: string | null;
   readyBlack: string | null;
+  arrivalCreator: string | null;
+  arrivalGuest: string | null;
+  arrivalNoticeSentAt: string | null;
+  arrivalNoticeCount: number;
+  ultimatumDeadline: string | null;
   status: string;
   whitePlayer: string;
   blackPlayer: string;
@@ -133,6 +138,79 @@ function detectPlatform() {
   return "desktop";
 }
 
+/* ── Stockage push (IndexedDB) : partagé avec le service worker.
+   Le SW s'en sert pour poussubscriptionchange + notifications programmées. ── */
+const PUSH_CTX_DB = "joust-push";
+const PUSH_CTX_STORE = "ctx";
+
+function openPushCtxDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(PUSH_CTX_DB, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(PUSH_CTX_STORE)) {
+        req.result.createObjectStore(PUSH_CTX_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function savePushContext(ctx: { matchId: string; playerName: string; notify5min: boolean }): Promise<void> {
+  try {
+    const db = await openPushCtxDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(PUSH_CTX_STORE, "readwrite");
+      tx.objectStore(PUSH_CTX_STORE).put(ctx, "context");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch { /* IndexedDB indisponible : pas de ré-inscription auto */ }
+}
+
+async function clearPushContext(): Promise<void> {
+  try {
+    const db = await openPushCtxDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(PUSH_CTX_STORE, "readwrite");
+      tx.objectStore(PUSH_CTX_STORE).delete("context");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch { /* rien à nettoyer */ }
+}
+
+/* ── Notification locale programmée (Notification Triggers) ──
+   Le client programme une notification LOCALE à scheduledAt via le SW.
+   Elle se déclenche même si le lien push expire entre-temps. À chaque
+   retour, on vérifie l'état et on re-programme/annule si besoin. ── */
+
+async function scheduleLocalNotif(params: {
+  matchId: string;
+  scheduledAt: string;
+  title?: string;
+  body?: string;
+}): Promise<void> {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    reg.active?.postMessage({
+      type: "joust-schedule",
+      matchId: params.matchId,
+      scheduledAt: params.scheduledAt,
+      title: params.title || "⏰ C'est l'heure de la joust !",
+      body: params.body || "Valide ton arrivée pour lancer la partie.",
+      url: "/",
+    });
+  } catch { /* SW indisponible — le push serveur reste la voie */ }
+}
+
+async function cancelScheduledNotif(): Promise<void> {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    reg.active?.postMessage({ type: "joust-cancel-schedule" });
+  } catch { /* rien à faire */ }
+}
+
 /* ============================================= */
 export function RendezVousApp() {
   const [screen, setScreen] = useState<Screen>("auth");
@@ -191,6 +269,13 @@ export function RendezVousApp() {
   const matchOver = match?.status === "completed" || match?.result != null;
   const chessStarted = Boolean(match && (isPlaying || matchOver));
   const isArmed = match?.status === "scheduled" && accepted && paramsConfirmed;
+  const iAmArrived = match ? (iAmCreator ? Boolean(match.arrivalCreator) : iAmGuest ? Boolean(match.arrivalGuest) : false) : false;
+  const oppArrived = match ? (iAmCreator ? Boolean(match.arrivalGuest) : Boolean(match.arrivalCreator)) : false;
+  const bothArrived = Boolean(match?.arrivalCreator && match?.arrivalGuest);
+  const arrivalCheckActive = Boolean(isArmed && !matchOver);
+  const ultimatumActive = Boolean(match?.ultimatumDeadline);
+  const ultimatumDeadlineLeft = match?.ultimatumDeadline ? Math.max(0, Math.floor((new Date(match.ultimatumDeadline).getTime() - now) / 1000)) : 0;
+  const nudgeCooldownLeft = match?.arrivalNoticeSentAt ? Math.max(0, 60 - Math.floor((now - new Date(match.arrivalNoticeSentAt).getTime()) / 1000)) : 0;
   const isOver = chess.isGameOver() || matchOver;
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
@@ -245,6 +330,41 @@ export function RendezVousApp() {
     } catch { /* */ }
   }, [apply]);
 
+  /* Ré-enregistre l'abonnement navigateur côté serveur s'il a disparu.
+     Retourne true si l'abonnement serveur est actif après la synchro. */
+  const syncServerSubscription = useCallback(
+    async (sub: PushSubscription): Promise<boolean> => {
+      if (!match || !pseudo) return false;
+      try {
+        const r = await fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            matchId: match.id,
+            playerName: pseudo,
+            notify5min: notify5minRef.current,
+            subscription: sub.toJSON(),
+          }),
+        });
+        const d = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (r.ok) {
+          setServerPushSubscribed(true);
+          /* Partage le contexte avec le service worker pour le
+             pushsubscriptionchange (ré-abonnement auto même app fermée). */
+          void savePushContext({ matchId: match.id, playerName: pseudo, notify5min: notify5minRef.current });
+          return true;
+        }
+        setServerPushSubscribed(false);
+        console.warn("[push] Ré-enregistrement serveur échoué:", r.status, d?.error);
+        return false;
+      } catch {
+        setServerPushSubscribed(false);
+        return false;
+      }
+    },
+    [match?.id, pseudo],
+  );
+
   const refreshNotif = useCallback(() => {
     if (typeof Notification === "undefined") { setPushSubscribed(false); return; }
     if (!("serviceWorker" in navigator)) { setPushSubscribed(false); return; }
@@ -252,21 +372,61 @@ export function RendezVousApp() {
     const t = window.setTimeout(() => { if (!cancelled) setPushSubscribed(false); }, 6000);
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
-      .then((s) => {
+      .then(async (s) => {
         const localSub = Boolean(s);
         if (cancelled) return;
-        setPushSubscribed(localSub);
-        if (localSub && match?.id && pseudo) {
-          fetch(`/api/push/status?matchId=${encodeURIComponent(match.id)}&playerName=${encodeURIComponent(pseudo)}`, { cache: "no-store" })
-            .then((r) => r.json().catch(() => null))
-          .then((d) => { if (!cancelled && d && typeof d.subscribed === "boolean") { setServerPushSubscribed(d.subscribed); if (typeof d.notify5min === "boolean") { setNotify5min(d.notify5min); notify5minRef.current = d.notify5min; } } })
-            .catch(() => undefined);
+
+        /* Souscription navigateur perdue MAIS permission encore accordée
+           (ex: pushsubscriptionchange n'a pas pu s'exécuter, purge du SW…) →
+           ré-abonnement silencieux + ré-enregistrement serveur. */
+        if (!s && Notification.permission === "granted" && match?.id && pseudo) {
+          try {
+            const v = (await (await fetch("/api/push/vapid", { cache: "no-store" })).json()) as { publicKey?: string };
+            if (v.publicKey) {
+              const reg = await navigator.serviceWorker.ready;
+              const newSub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(v.publicKey),
+              });
+              if (cancelled) return;
+              setPushSubscribed(true);
+              await syncServerSubscription(newSub);
+            }
+          } catch {
+            if (!cancelled) setPushSubscribed(false);
+          }
+          return;
         }
+
+        setPushSubscribed(localSub);
+        if (!s) {
+          setServerPushSubscribed(false);
+          return;
+        }
+        if (!match?.id || !pseudo) return;
+        try {
+          const r = await fetch(`/api/push/status?matchId=${encodeURIComponent(match.id)}&playerName=${encodeURIComponent(pseudo)}`, { cache: "no-store" });
+          const d = (await r.json().catch(() => null)) as { subscribed?: boolean; notify5min?: boolean } | null;
+          if (cancelled) return;
+          if (d && typeof d.subscribed === "boolean") {
+            if (d.subscribed) {
+              setServerPushSubscribed(true);
+              if (typeof d.notify5min === "boolean") {
+                setNotify5min(d.notify5min);
+                notify5minRef.current = d.notify5min;
+              }
+            } else {
+              /* Abonnement navigateur présent mais absent côté serveur
+                 (purge, endpoint unique écrasé, …) → ré-enregistrement auto. */
+              await syncServerSubscription(s);
+            }
+          }
+        } catch { /* statut indisponible : on garde l'état courant */ }
       })
       .catch(() => { if (!cancelled) setPushSubscribed(false); })
       .finally(() => window.clearTimeout(t));
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [match?.id, pseudo]);
+  }, [match?.id, pseudo, syncServerSubscription]);
 
   /* ── auth ── */
   async function submitAuth(e: React.FormEvent) {
@@ -287,6 +447,8 @@ export function RendezVousApp() {
 
   async function logout() {
     try { await fetch("/api/auth/logout", { method: "POST" }); } catch { /* */ }
+    void clearPushContext();
+    void cancelScheduledNotif();
     setAuthUser(null);
     setPseudo("");
     setPseudoInput("");
@@ -347,6 +509,27 @@ export function RendezVousApp() {
     return () => { stopped = true; cleanupRealtime(); if (retry) window.clearTimeout(retry); es?.close(); };
   }, [match?.id, screen, load]);
   useEffect(() => { if (match?.status === "scheduled" && accepted && paramsConfirmed && timeLeft <= 0) void load(match.id); }, [timeLeft, match?.id, match?.status, accepted, paramsConfirmed, load]);
+
+  /* ── Notification locale programmée (Notification Triggers) ──
+     Programme une notification à scheduledAt quand la joust est armée.
+     À chaque changement d'état, on vérifie que la programmation correspond. */
+  useEffect(() => {
+    if (!match) return;
+    const expectScheduled =
+      match.status === "scheduled" && match.inviteStatus === "accepted" && match.timeControlConfirmed;
+
+    if (expectScheduled && new Date(match.scheduledAt).getTime() > Date.now()) {
+      void scheduleLocalNotif({
+        matchId: match.id,
+        scheduledAt: match.scheduledAt,
+        title: "⏰ C'est l'heure de la joust !",
+        body: `${match.creatorName} vs ${match.guestName} — valide ton arrivée pour lancer la partie.`,
+      });
+    } else {
+      /* Match non armé / annulé / terminé → annule la programmation locale. */
+      void cancelScheduledNotif();
+    }
+  }, [match?.id, match?.status, match?.inviteStatus, match?.timeControlConfirmed, match?.scheduledAt, match?.creatorName, match?.guestName]);
 
   /* Tuto notifications : ne s'auto-ouvre QUE si l'utilisateur n'a jamais vu le tuto ET n'est pas abonné. */
   useEffect(() => {
@@ -519,14 +702,11 @@ export function RendezVousApp() {
       setPushSubscribed(true);
       setTutorialOpen(false);
 
-      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, notify5min: notify5minRef.current, subscription: sub.toJSON() }) });
-      const d = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
-      if (r.ok) {
-        setServerPushSubscribed(true);
+      const ok = await syncServerSubscription(sub);
+      if (ok) {
         notify("🔔 Notifications activées !");
       } else {
-        setServerPushSubscribed(false);
-        notify(`⚠️ Abonné mais non enregistré sur le serveur (${d?.error ?? r.status}).`);
+        notify("⚠️ Abonné mais non enregistré sur le serveur.");
       }
     } catch (err) {
       setTutorialOpen(false);
@@ -541,11 +721,22 @@ export function RendezVousApp() {
     }
   }
 
-  /* Push manuel de test. */
+  /* Push manuel de test : ré-enregistre d'abord si l'abonnement serveur a disparu. */
   async function testPush() {
     if (!match) return;
     try {
       setSaving(true);
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          const r = await fetch(`/api/push/status?matchId=${encodeURIComponent(match.id)}&playerName=${encodeURIComponent(pseudo)}`, { cache: "no-store" });
+          const d = (await r.json().catch(() => null)) as { subscribed?: boolean } | null;
+          if (d && d.subscribed === false) {
+            await syncServerSubscription(sub);
+          }
+        }
+      }
       const r = await fetch("/api/push/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -557,7 +748,10 @@ export function RendezVousApp() {
     } catch { notify("Envoi impossible."); } finally { setSaving(false); }
   }
 
-  function leaveMatch() { localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); }
+  function leaveMatch() {
+    void cancelScheduledNotif();
+    localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home");
+  }
   function toggleDay(d: number) { setDays((c) => (c.includes(d) ? c.filter((x) => x !== d) : [...c, d])); }
 
   /* board */
@@ -579,12 +773,6 @@ export function RendezVousApp() {
   }
   const rows = useMemo(() => { const b = chess.board(); return isWhite ? b : b.map((r) => [...r].reverse()).reverse(); }, [chess, isWhite]);
   const sqName = (r: number, c: number) => `${isWhite ? FILES[c] : FILES[7 - c]}${isWhite ? 8 - r : r + 1}`;
-
-  const ms = Math.max(0, timeLeft);
-  const dd = Math.floor(ms / 86_400_000);
-  const hh = String(Math.floor((ms % 86_400_000) / 3_600_000)).padStart(2, "0");
-  const mmv = String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, "0");
-  const ssv = String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0");
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-[#08090e]"><div className="anim-fade-up flex flex-col items-center gap-5"><div className="relative h-14 w-14"><div className="absolute inset-0 rounded-full bg-violet-600/30 blur-xl" /><div className="anim-spin relative grid h-14 w-14 place-items-center rounded-full bg-[#13151d] ring-1 ring-white/[0.06]"><ChessPiece color="w" type="k" className="h-8 w-8 text-[#e4d6ff]" /></div></div><p className="text-sm font-extrabold text-white">Joust</p></div></div>;
 
@@ -785,20 +973,77 @@ export function RendezVousApp() {
               <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d'autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div></Card></div>
             )}
 
-            {/* — armed countdown — */}
-            {isArmed && (
+            {/* — arrival check (nouveau flow : pas de timer auto) — */}
+            {arrivalCheckActive && (
               <div className="anim-fade-up space-y-5">
-                <div className="text-center"><Badge tone="accent"><Dot on /> Joust armée</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2><p className="mt-1.5 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)}</p></div>
+                <div className="text-center">
+                  <Badge tone={bothArrived ? "ok" : "accent"}><Dot on /> Validation d'arrivée</Badge>
+                  <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
+                  <p className="mt-1.5 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p>
+                </div>
                 <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                  <div className="flex justify-center gap-1.5 border-b border-white/[0.05] bg-white/[0.015] px-4 py-3">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-8 w-8 place-items-center rounded-lg text-[10px] font-black ${on ? (isNext ? "bg-violet-500 text-white ring-2 ring-violet-300/50" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
-                  <div className="bg-gradient-to-b from-violet-600/[0.06] to-transparent px-6 pb-6 pt-6 text-center"><p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Départ dans</p><div className="mt-3 font-mono text-5xl font-black tracking-tight text-white sm:text-6xl">{dd > 0 && <span className="text-violet-400">{dd}j </span>}{hh}<span className="anim-pulse text-violet-400">:</span>{mmv}<span className="anim-pulse text-violet-400">:</span>{ssv}</div><p className="mt-3 text-xs capitalize text-[#6b6882]">{new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p></div>
-                  <div className="mx-4 mb-4 flex items-center justify-center gap-2 rounded-2xl bg-white/[0.03] px-4 py-2.5 ring-1 ring-white/[0.05]"><span className="font-mono text-sm font-black text-white">{tc.tag}</span><span className="text-xs font-bold text-[#6b6882]">{tc.label}</span><Badge tone="ok">Validé</Badge></div>
+                  <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
+                    <div className="flex flex-col items-center gap-3 px-3 py-6">
+                      <Avatar name={match.creatorName} tone="a" />
+                      <p className="text-[11px] font-extrabold text-white">{match.creatorName === pseudo ? "Toi" : match.creatorName}</p>
+                      <Badge tone={Boolean(match.arrivalCreator) ? "ok" : "warn"}>{match.arrivalCreator ? "Arrivé ✓" : "…"}</Badge>
+                    </div>
+                    <div className="flex flex-col items-center gap-3 bg-white/[0.02] px-3 py-6">
+                      <Avatar name={match.guestName} tone="b" />
+                      <p className="text-[11px] font-extrabold text-white">{match.guestName === pseudo ? "Toi" : match.guestName}</p>
+                      <Badge tone={Boolean(match.arrivalGuest) ? "ok" : "warn"}>{match.arrivalGuest ? "Arrivé ✓" : "…"}</Badge>
+                    </div>
+                  </div>
+                  <div className="border-t border-white/[0.05] px-5 pb-6 pt-4 text-center">
+                    {!iAmArrived ? (
+                      <>
+                        <p className="text-[11px] leading-5 text-[#6b6882]">Quand tu arrives, valide ton arrivée pour lancer la joust.</p>
+                        <div className="mt-4"><Btn variant="giant" disabled={saving} onClick={() => void patch({ action: "arrive", playerName: pseudo }, "Arrivée validée !")}><span className="inline-flex items-center gap-2"><Zap size={20} /> Je suis arrivé(e)</span></Btn></div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="rounded-2xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — tu attends {opponentName}…</p></div>
+                        {!oppArrived && iAmCreator && (
+                          <>
+                            {ultimatumActive ? (
+                              <div className="mt-4 rounded-2xl bg-rose-500/[0.08] px-4 py-4 ring-1 ring-rose-500/30">
+                                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">Ultimatum en cours</p>
+                                <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
+                                <p className="mt-2 text-[11px] text-rose-200/80">{opponentName} a 1 minute pour valider son arrivée, sinon il perd la partie.</p>
+                              </div>
+                            ) : (
+                              <div className="mt-4 space-y-2">
+                                <Btn variant="secondary" disabled={saving || nudgeCooldownLeft > 0} onClick={() => void patch({ action: "nudge", playerName: pseudo }, nudgeCooldownLeft > 0 ? `Relance possible dans ${nudgeCooldownLeft}s` : "Notification relancée !")}>
+                                  {nudgeCooldownLeft > 0 ? `Relayer dans ${nudgeCooldownLeft}s…` : "🔔 Relancer une notification"}
+                                </Btn>
+                                <Btn variant="danger" disabled={saving} onClick={() => void patch({ action: "ultimatum", playerName: pseudo }, "Ultimatum envoyé !")}>
+                                  ⏳ Envoyer un ultimatum (1 min)
+                                </Btn>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {!oppArrived && iAmGuest && (
+                          <div className="mt-4 rounded-2xl bg-amber-500/[0.06] px-4 py-3 ring-1 ring-amber-500/20">
+                            <p className="text-xs font-bold text-amber-200">En attente de {opponentName}…</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {bothArrived && (
+                      <div className="mt-4 rounded-2xl bg-emerald-500/[0.1] px-4 py-4 ring-1 ring-emerald-500/30">
+                        <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés !</p>
+                        <p className="mt-2 text-xs font-bold text-emerald-200/80">La partie démarre…</p>
+                        <div className="mt-4"><Btn disabled={saving} onClick={() => void load(match.id)}>Lancer la partie</Btn></div>
+                      </div>
+                    )}
+                  </div>
                 </Card>
                 <Btn variant="ghost" onClick={leaveMatch}>Annuler la joust</Btn>
               </div>
             )}
 
-            {/* — ready check — */}
+            {/* — ready check (legacy, gardé pour compatibilité) — */}
             {readyCheckActive && (
               <div className="anim-fade-up space-y-5">
                 <div className="text-center"><Badge tone="accent"><Dot on /> C'est l'heure !</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2><p className="mt-1.5 text-xs font-bold text-violet-300">{tc.label} · {tc.tag}</p></div>

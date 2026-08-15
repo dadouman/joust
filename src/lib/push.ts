@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import webpush from "web-push";
@@ -87,6 +87,34 @@ function payload(title: string, body: string, url = "/") {
   return JSON.stringify({ title, body, url, icon: "/icons/icon-512.png", badge: "/icons/icon-512.png" });
 }
 
+/** Envoie une notification à chaque ligne et nettoie les endpoints expirés. */
+async function sendToRows(rows: SubRow[], title: string, body: string, url: string): Promise<number> {
+  let sent = 0;
+  const deadEndpoints: string[] = [];
+
+  await Promise.allSettled(
+    rows.map(async (row) => {
+      try {
+        await webpush.sendNotification(rowToPushSubscription(row), payload(title, body, url));
+        sent += 1;
+      } catch (err) {
+        /* Endpoint expiré (410 Gone) ou n'existe plus (404) → l'abonnement
+           est mort, on le supprime pour ne plus tenter d'envois vers lui. */
+        const status = (err as { statusCode?: number }).statusCode ?? 0;
+        if (status === 404 || status === 410) deadEndpoints.push(row.endpoint);
+      }
+    }),
+  );
+
+  if (deadEndpoints.length > 0) {
+    await db
+      .delete(pushSubscriptions)
+      .where(inArray(pushSubscriptions.endpoint, deadEndpoints))
+      .catch(() => undefined);
+  }
+  return sent;
+}
+
 /** Send a push notification to every device subscribed to a match. Fire-and-forget. */
 export async function sendPushToMatch(
   matchId: string,
@@ -100,10 +128,7 @@ export async function sendPushToMatch(
       .from(pushSubscriptions)
       .where(eq(pushSubscriptions.matchId, matchId));
 
-    const results = await Promise.allSettled(
-      rows.map((row) => webpush.sendNotification(rowToPushSubscription(row), payload(title, body, url))),
-    );
-    return results.filter((r) => r.status === "fulfilled").length;
+    return await sendToRows(rows, title, body, url);
   } catch {
     return 0;
   }
@@ -139,10 +164,7 @@ export async function sendPushToPlayer(
       .select()
       .from(pushSubscriptions)
       .where(and(...conditions));
-    const results = await Promise.allSettled(
-      rows.map((row) => webpush.sendNotification(rowToPushSubscription(row), payload(title, body, url))),
-    );
-    return results.filter((r) => r.status === "fulfilled").length;
+    return await sendToRows(rows, title, body, url);
   } catch {
     return 0;
   }

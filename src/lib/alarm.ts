@@ -1,13 +1,22 @@
 /* ── Alarm / rendez-vous state machine (game-agnostic) ──
-   The wake-up system (scheduled → playing, ready check, 60s fallback)
+   The wake-up system (scheduled → playing, arrival validation, ultimatum)
    lives here and NEVER imports a specific game engine.
-   The game adapter receives control once the match is `playing`. */
+   The game adapter receives control once the match is `playing`.
+
+   Nouveau flow de début de joust :
+   1. La joust est validée (inviteStatus = accepted, timeControlConfirmed) mais
+      AUCUN timer ne se déclenche automatiquement à l'heure.
+   2. Le joueur 1 (créateur) valide son arrivée → notification au joueur 2.
+   3. Si le joueur 2 arrive et valide → le match est lancé.
+   4. Sinon, le joueur 1 peut relancer une notification au bout de 1 min.
+   5. Sinon, le joueur 1 peut envoyer un ultimatum (1 min pour se connecter
+      sinon il perd la partie). */
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { matches } from "@/db/schema";
 import { getGame } from "@/lib/games";
-import { notify5minReminder, notifyMatch } from "@/lib/push";
+import { notify5minReminder } from "@/lib/push";
 import type { MatchRow } from "@/lib/games/types";
 
 /**
@@ -38,13 +47,42 @@ export async function advanceAlarm(match: MatchRow, now: Date): Promise<MatchRow
       .catch(() => undefined);
   }
 
-  /* 1) The alarm fires when both players validated the invitation AND the time control. */
+  /* 1) Ultimatum expired → le joueur 2 (invité) n'a pas validé son arrivée
+     dans le délai → forfait : le créateur gagne. */
   if (
     current.status === "scheduled" &&
     current.inviteStatus === "accepted" &&
     current.timeControlConfirmed &&
-    current.scheduledAt.getTime() <= now.getTime()
+    current.ultimatumDeadline &&
+    !current.arrivalGuest &&
+    current.ultimatumDeadline.getTime() <= now.getTime()
   ) {
+    const [forfeited] = await db
+      .update(matches)
+      .set({
+        status: "completed",
+        result: "forfeit",
+        winnerName: current.creatorName,
+        endedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(matches.id, match.id), eq(matches.status, "scheduled")))
+      .returning();
+    if (forfeited) {
+      current = forfeited;
+    }
+  }
+
+  /* 2) Both players validated their arrival → hand control to the game
+     adapter (chess initialises its clocks). */
+  const bothArrived =
+    current.status === "scheduled" &&
+    current.inviteStatus === "accepted" &&
+    current.timeControlConfirmed &&
+    current.arrivalCreator &&
+    current.arrivalGuest;
+
+  if (bothArrived) {
     const [started] = await db
       .update(matches)
       .set({ status: "playing", updatedAt: now })
@@ -52,22 +90,9 @@ export async function advanceAlarm(match: MatchRow, now: Date): Promise<MatchRow
       .returning();
     if (started) {
       current = started;
-      notifyMatch(match.id, "⏰ C’est l’heure !", "Touchez « Prêt » dans les 60 secondes.");
+      const adapter = getGame(current.gameType);
+      current = await adapter.onGameStart(current, now);
     }
-  }
-
-  /* 2) Ready check: once both players are ready OR 60 seconds elapsed →
-       hand control to the game adapter (chess initialises its clocks). */
-  const bothReady =
-    current.status === "playing" && current.readyWhite && current.readyBlack;
-  const fallbackElapsed =
-    current.status === "playing" &&
-    (!current.readyWhite || !current.readyBlack) &&
-    current.scheduledAt.getTime() + 60_000 <= now.getTime();
-
-  if (bothReady || fallbackElapsed) {
-    const adapter = getGame(current.gameType);
-    current = await adapter.onGameStart(current, now);
   }
 
   /* 3) Game tick (chess timeout detection, etc.). */

@@ -47,6 +47,20 @@ export const matches = pgTable(
     readyWhite: timestamp("ready_white", { withTimezone: true }),
     readyBlack: timestamp("ready_black", { withTimezone: true }),
 
+    /* ── Arrival validation (nouveau flow) ──
+       Chaque joueur valide son arrivée avant que le match puisse être lancé.
+       `arrivalCreator` / `arrivalGuest` : timestamp de validation, ou null.
+       `arrivalNoticeSentAt` : dernier envoi de notification de relance.
+       `arrivalNoticeCount` : nombre de relances déjà envoyées (max 1 avant ultimatum).
+       `ultimatumSentAt` / `ultimatumDeadline` : ultimatum envoyé par le créateur
+       · si l'invité ne valide pas avant la deadline → forfait (défaite). */
+    arrivalCreator: timestamp("arrival_creator", { withTimezone: true }),
+    arrivalGuest: timestamp("arrival_guest", { withTimezone: true }),
+    arrivalNoticeSentAt: timestamp("arrival_notice_sent_at", { withTimezone: true }),
+    arrivalNoticeCount: integer("arrival_notice_count").notNull().default(0),
+    ultimatumSentAt: timestamp("ultimatum_sent_at", { withTimezone: true }),
+    ultimatumDeadline: timestamp("ultimatum_deadline", { withTimezone: true }),
+
     /* ── 5-minute pre-game reminder (push) ── */
     reminder5SentAt: timestamp("reminder_5_sent_at", { withTimezone: true }),
 

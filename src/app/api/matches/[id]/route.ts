@@ -176,6 +176,99 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return Response.json({ match: serializeMatch(updated) });
     }
 
+    /* ── Arrival validation: player clicked "Je suis arrivé(e)" ──
+       Nouveau flow : pas de timer auto. Le créateur arrive → notifie l'invité.
+       Quand les deux arrivées sont validées, le match est lancé (via tick). */
+    if (body.action === "arrive") {
+      const denied = await requireActor();
+      if (denied) return denied;
+      if (match.status !== "scheduled" || match.inviteStatus !== "accepted" || !match.timeControlConfirmed) {
+        return Response.json({ error: "La joust doit être validée pour valider ton arrivée." }, { status: 409 });
+      }
+
+      const isCreator = playerName === match.creatorName;
+      const isGuest = playerName === match.guestName;
+      if (!isCreator && !isGuest) {
+        return Response.json({ error: "Vous ne faites pas partie de ce duel." }, { status: 400 });
+      }
+
+      const [updated] = await db
+        .update(matches)
+        .set(
+          isCreator
+            ? { arrivalCreator: now, updatedAt: now }
+            : { arrivalGuest: now, updatedAt: now },
+        )
+        .where(eq(matches.id, id))
+        .returning();
+
+      /* Créateur arrivé → notifier l'invité qu'il peut valider son arrivée. */
+      if (isCreator && match.guestName) {
+        notifyPlayer(id, match.guestName, "🎯 Ton adversaire est arrivé !", `${match.creatorName} t'attend — valide ton arrivée pour lancer la partie.`);
+      }
+      /* Invité arrivé → notifier le créateur que la partie va se lancer. */
+      if (isGuest) {
+        notifyPlayer(id, match.creatorName, "✅ Ton adversaire est arrivé !", `${match.guestName} a validé son arrivée — la partie va commencer.`);
+      }
+      broadcastMatchChange(id, { action: "arrive", playerName });
+      return Response.json({ match: serializeMatch(updated) });
+    }
+
+    /* ── Nudge: le créateur relance une notification à l'invité (1 min min. entre deux). ── */
+    if (body.action === "nudge") {
+      const denied = await requireActor();
+      if (denied) return denied;
+      if (playerName !== match.creatorName) {
+        return Response.json({ error: "Seul le créateur peut relancer une notification." }, { status: 403 });
+      }
+      if (!match.arrivalCreator) {
+        return Response.json({ error: "Valide d'abord ton arrivée pour relancer une notification." }, { status: 409 });
+      }
+      if (!match.guestName) {
+        return Response.json({ error: "L'invité n'a pas encore rejoint la joust." }, { status: 409 });
+      }
+      /* 1 minute minimum entre deux relances. */
+      if (match.arrivalNoticeSentAt && now.getTime() - match.arrivalNoticeSentAt.getTime() < 60_000) {
+        const wait = Math.max(0, 60 - Math.floor((now.getTime() - match.arrivalNoticeSentAt.getTime()) / 1000));
+        return Response.json({ error: `Tu pourras relancer une notification dans ${wait} s.` }, { status: 429 });
+      }
+      const [updated] = await db
+        .update(matches)
+        .set({ arrivalNoticeSentAt: now, arrivalNoticeCount: (match.arrivalNoticeCount ?? 0) + 1, updatedAt: now })
+        .where(eq(matches.id, id))
+        .returning();
+      notifyPlayer(id, match.guestName, "🔔 Rappel : ton adversaire t'attend !", `${match.creatorName} a validé son arrivée — clique pour valider la tienne et lancer la partie.`);
+      broadcastMatchChange(id, { action: "nudge" });
+      return Response.json({ match: serializeMatch(updated) });
+    }
+
+    /* ── Ultimatum: le créateur donne 1 minute à l'invité, sinon forfait. ── */
+    if (body.action === "ultimatum") {
+      const denied = await requireActor();
+      if (denied) return denied;
+      if (playerName !== match.creatorName) {
+        return Response.json({ error: "Seul le créateur peut envoyer un ultimatum." }, { status: 403 });
+      }
+      if (!match.arrivalCreator) {
+        return Response.json({ error: "Valide d'abord ton arrivée pour envoyer un ultimatum." }, { status: 409 });
+      }
+      if (match.ultimatumDeadline) {
+        return Response.json({ error: "Un ultimatum est déjà en cours." }, { status: 409 });
+      }
+      if (!match.guestName) {
+        return Response.json({ error: "L'invité n'a pas encore rejoint la joust." }, { status: 409 });
+      }
+      const deadline = new Date(now.getTime() + 60_000);
+      const [updated] = await db
+        .update(matches)
+        .set({ ultimatumSentAt: now, ultimatumDeadline: deadline, updatedAt: now })
+        .where(eq(matches.id, id))
+        .returning();
+      notifyPlayer(id, match.guestName, "⏳ ULTIMATUM — 1 minute !", `${match.creatorName} donne 1 minute pour te connecter et valider ton arrivée, sinon tu perds la partie.`);
+      broadcastMatchChange(id, { action: "ultimatum" });
+      return Response.json({ match: serializeMatch(updated) });
+    }
+
     /* ── Ready check: player clicked "Prêt" ── */
     if (body.action === "ready") {
       const denied = await requireActor();
@@ -303,6 +396,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           lastMoveAt: null,
           readyWhite: null,
           readyBlack: null,
+          arrivalCreator: null,
+          arrivalGuest: null,
+          arrivalNoticeSentAt: null,
+          arrivalNoticeCount: 0,
+          ultimatumSentAt: null,
+          ultimatumDeadline: null,
           reminder5SentAt: null,
           drawStatus: "none",
           drawProposedBy: null,
@@ -336,6 +435,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           lastMoveAt: null,
           readyWhite: null,
           readyBlack: null,
+          arrivalCreator: null,
+          arrivalGuest: null,
+          arrivalNoticeSentAt: null,
+          arrivalNoticeCount: 0,
+          ultimatumSentAt: null,
+          ultimatumDeadline: null,
           reminder5SentAt: null,
           whitePlayer: match.blackPlayer,
           blackPlayer: match.whitePlayer,
