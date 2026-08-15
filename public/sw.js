@@ -1,12 +1,16 @@
-/* Joust service worker — Web Push + minimal app-shell cache. */
-const CACHE = "joust-shell-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-512.png", "/icon.svg"];
+/* Joust service worker — Web Push. Installation volontairement minimale
+   pour garantir que le SW s'installe sur iOS 16.4+ (aucun cache.addAll
+   bloquant qui peut faire échouer l'installation du SW sur iPhone). */
+const CACHE = "joust-shell-v2";
+const PRECACHE = ["/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
+  /* On tente un pré-cache minimal des icônes uniquement (fichiers statiques
+     sûrs). S'il échoue, on N'EMPÊCHE PAS l'installation du SW. */
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
+      .then((cache) => cache.addAll(PRECACHE))
       .catch(() => undefined),
   );
   self.skipWaiting();
@@ -17,36 +21,17 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
+      .catch(() => undefined),
   );
 });
 
-/* Navigation requests: network first, cached shell as fallback (offline). */
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  if (request.method !== "GET") return;
-
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put("/", copy)).catch(() => undefined);
-          return response;
-        })
-        .catch(() => caches.match("/")),
-    );
-    return;
-  }
-
-  if (SHELL.includes(new URL(request.url).pathname)) {
-    event.respondWith(caches.match(request).then((hit) => hit || fetch(request)));
-  }
-});
+/* Rien pour fetch : le serveur Next gère tout. (on ne matérialise pas la
+   navigation pour éviter d'interférer avec l'app) */
 
 /* ── Web Push ── */
 self.addEventListener("push", (event) => {
-  let payload: { title?: string; body?: string; url?: string } = {};
+  let payload = {};
   try {
     payload = event.data ? event.data.json() : {};
   } catch {
