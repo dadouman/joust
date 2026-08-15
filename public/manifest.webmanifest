@@ -1,11 +1,17 @@
 {
-  "name": "Joust",
+  "name": "Joust — Échecs à l'heure dite",
   "short_name": "Joust",
   "description": "Une partie d'échecs, à l'heure dite, entre deux amis.",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
   "background_color": "#08090e",
   "theme_color": "#101b2d",
+  "lang": "fr",
+  "categories": ["games", "social"],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -18,6 +24,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

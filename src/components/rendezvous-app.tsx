@@ -19,8 +19,6 @@ type Match = {
   timeOfDay: string;
   recurrenceDays: string;
   inviteStatus: string;
-  /* Game abstraction: discriminates which adapter runs (chess today).
-     Adding a new game type requires no new match-shaped fields. */
   gameType: string;
   gameState: Record<string, unknown> | null;
   timeControl: string;
@@ -35,7 +33,6 @@ type Match = {
   whitePlayer: string;
   blackPlayer: string;
   lastFen: string | null;
-  /* New fields for review 3 */
   result: string | null;
   winnerName: string | null;
   endedAt: string | null;
@@ -136,7 +133,7 @@ function detectPlatform() {
   return "desktop";
 }
 
-/* ═══════════════════════════════════════ */
+/* ============================================= */
 export function RendezVousApp() {
   const [screen, setScreen] = useState<Screen>("auth");
   const [pseudo, setPseudo] = useState("");
@@ -159,6 +156,7 @@ export function RendezVousApp() {
   const [showQr, setShowQr] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [serverPushSubscribed, setServerPushSubscribed] = useState<boolean | null>(null);
   const [editing, setEditing] = useState(false);
   const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
   const prevWaitingRef = useRef(false);
@@ -175,7 +173,7 @@ export function RendezVousApp() {
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
-  /* ── identity: derived from pseudo, no toggle ── */
+  /* ── identity ── */
   const iAmCreator = match ? match.creatorName === pseudo : false;
   const iAmGuest = match ? match.guestName === pseudo : false;
   const opponentName = match ? (iAmCreator ? match.guestName : match.creatorName) : "";
@@ -187,11 +185,7 @@ export function RendezVousApp() {
   const declined = match?.inviteStatus === "declined";
   const paramsConfirmed = match?.timeControlConfirmed === true;
   const isPlaying = match?.status === "playing";
-  /* La partie en cours reste affichée même terminée : sinon un timeout/abandon après
-     un ready vide ferait disparaître tout l'écran (bug de l'écran noir). */
-  /* la partie est finie si le moteur d'echecs dit fin, OU le serveur a clos (abandon, timeout, nulle, mat...) */
   const matchOver = match?.status === "completed" || match?.result != null;
-  /* on garde l'ecran echecs visible apres la fin : sinon l'ecran disparait (bug ecran noir) */
   const chessStarted = Boolean(match && (isPlaying || matchOver));
   const isArmed = match?.status === "scheduled" && accepted && paramsConfirmed;
   const isOver = chess.isGameOver() || matchOver;
@@ -199,12 +193,10 @@ export function RendezVousApp() {
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
   const timeLeft = match ? new Date(match.scheduledAt).getTime() - now : 0;
 
-  /* who proposed last — the OTHER one must accept */
   const lastProposalByMe = match ? (iAmCreator ? match.timeControlBy === "creator" : match.timeControlBy === "guest") : false;
   const iMustAnswer = Boolean(match && hasOpponent && !accepted && !lastProposalByMe);
   const waitingOnOpponent = Boolean(match && hasOpponent && !accepted && lastProposalByMe);
 
-  /* ready check */
   const iAmReady = match ? (isWhite ? Boolean(match.readyWhite) : Boolean(match.readyBlack)) : false;
   const oppReady = match ? (isWhite ? Boolean(match.readyBlack) : Boolean(match.readyWhite)) : false;
   const readyDeadline = useMemo(() => {
@@ -234,11 +226,10 @@ export function RendezVousApp() {
     return turn === "w" ? match.whitePlayer : match.blackPlayer;
   }, [match, now, chess, chessStarted]);
 
-  const notify = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 3200); }, []);
+  const notify = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 3500); }, []);
   const apply = useCallback((p: { match: Match; moves?: Move[] }) => { setMatch(p.match); if (p.moves) setMoves(p.moves); }, []);
   const load = useCallback(async (id: string) => {
     try {
-      /* Tick FIRST: all state transitions (alarm, ready check, timeouts) happen here (review §2.2.1). */
       const ac = new AbortController();
       const timer = window.setTimeout(() => ac.abort(), 8000);
       try {
@@ -252,11 +243,29 @@ export function RendezVousApp() {
   }, [apply]);
 
   const refreshNotif = useCallback(() => {
-    if (typeof Notification === "undefined") return setPushSubscribed(false);
-    if ("serviceWorker" in navigator) navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription().then((s) => setPushSubscribed(Boolean(s))).catch(() => setPushSubscribed(false)));
-  }, []);
+    if (typeof Notification === "undefined") { setPushSubscribed(false); return; }
+    if (!("serviceWorker" in navigator)) { setPushSubscribed(false); return; }
+    let cancelled = false;
+    const t = window.setTimeout(() => { if (!cancelled) setPushSubscribed(false); }, 6000);
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((s) => {
+        const localSub = Boolean(s);
+        if (cancelled) return;
+        setPushSubscribed(localSub);
+        if (localSub && match?.id && pseudo) {
+          fetch(`/api/push/status?matchId=${encodeURIComponent(match.id)}&playerName=${encodeURIComponent(pseudo)}`, { cache: "no-store" })
+            .then((r) => r.json().catch(() => null))
+            .then((d) => { if (!cancelled && d && typeof d.subscribed === "boolean") setServerPushSubscribed(d.subscribed); })
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => { if (!cancelled) setPushSubscribed(false); })
+      .finally(() => window.clearTimeout(t));
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [match?.id, pseudo]);
 
-  /* ── auth actions ── */
+  /* ── auth ── */
   async function submitAuth(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setAuthError("");
     try {
@@ -294,7 +303,6 @@ export function RendezVousApp() {
       try {
         const urlCode = new URLSearchParams(window.location.search).get("code");
         if (urlCode) setCodeInput(urlCode.toUpperCase());
-        /* Restore the server session cookie (auth required) */
         try {
           const r = await fetch("/api/auth/me", { cache: "no-store" });
           if (r.ok) {
@@ -310,7 +318,6 @@ export function RendezVousApp() {
             }
           }
         } catch { /* session cookie absent */ }
-        /* No session → account screen (create/login) */
         setScreen("auth");
       } catch { setScreen("auth"); } finally { setLoading(false); refreshNotif(); }
     })();
@@ -318,43 +325,27 @@ export function RendezVousApp() {
 
   useEffect(() => { const h = (e: Event) => { e.preventDefault(); deferredPrompt.current = e as unknown as { prompt: () => Promise<void> }; }; window.addEventListener("beforeinstallprompt", h); window.addEventListener("focus", refreshNotif); return () => { window.removeEventListener("beforeinstallprompt", h); window.removeEventListener("focus", refreshNotif); }; }, [refreshNotif]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
-  /* Polling de secours lent (8 s) — le quasi temps réel est fourni par SSE */
   useEffect(() => { if (!match || screen !== "match") return; const t = setInterval(() => void load(match.id), 8000); return () => clearInterval(t); }, [match?.id, screen, load]);
 
-  /* Temps réel — Supabase Realtime Broadcast si configuré, sinon SSE (< 500 ms).
-     Les deux déclenchent le même rechargement ; le SSE reste en filet de sécurité. */
   useEffect(() => {
     if (!match || screen !== "match") return;
     const cleanupRealtime = listenToMatch(match.id, () => void load(match.id));
-
     if (typeof EventSource === "undefined") return cleanupRealtime;
     let stopped = false;
     let es: EventSource | null = null;
     let retry: number | undefined;
-
     const connect = () => {
-      try {
-        es = new EventSource(`/api/matches/${match.id}/stream`);
-      } catch {
-        retry = window.setTimeout(connect, 2000);
-        return;
-      }
+      try { es = new EventSource(`/api/matches/${match.id}/stream`); }
+      catch { retry = window.setTimeout(connect, 2000); return; }
       es.addEventListener("update", () => { if (!stopped) void load(match.id); });
-      es.onerror = () => {
-        es?.close();
-        if (!stopped) retry = window.setTimeout(connect, 2000);
-      };
+      es.onerror = () => { es?.close(); if (!stopped) retry = window.setTimeout(connect, 2000); };
     };
     connect();
-
-    return () => {
-      stopped = true;
-      cleanupRealtime();
-      if (retry) window.clearTimeout(retry);
-      es?.close();
-    };
+    return () => { stopped = true; cleanupRealtime(); if (retry) window.clearTimeout(retry); es?.close(); };
   }, [match?.id, screen, load]);
   useEffect(() => { if (match?.status === "scheduled" && accepted && paramsConfirmed && timeLeft <= 0) void load(match.id); }, [timeLeft, match?.id, match?.status, accepted, paramsConfirmed, load]);
+
+  /* Tuto notifications : ne s'auto-ouvre QUE si l'utilisateur n'a jamais vu le tuto ET n'est pas abonné. */
   useEffect(() => {
     if (match && match.inviteStatus === "accepted" && match.timeControlConfirmed && !pushSubscribed && !tutorialOpen) {
       const shown = localStorage.getItem("joust-notif-tutorial-shown");
@@ -363,20 +354,17 @@ export function RendezVousApp() {
   }, [match?.inviteStatus, match?.timeControlConfirmed, pushSubscribed, tutorialOpen]);
   useEffect(() => setSelectedSquare(null), [match?.lastFen]);
 
-  /* Notification visuelle quand l'adversaire modifie la proposition que j'ai envoyée :
-     passage de "en attente de sa réponse" à "à moi de répondre" (contre-proposition reçue). */
+  /* Notification visuelle quand l'adversaire modifie la proposition. */
   useEffect(() => {
     if (!match) return;
     const prevWaiting = prevWaitingRef.current;
     prevWaitingRef.current = waitingOnOpponent;
-    /* Ne notifier que les transitions déclenchées par une mise à jour serveur
-       (pas au chargement initial), si on doit maintenant répondre et que la joust est toujours en négociation. */
     if (prevWaiting && !waitingOnOpponent && iMustAnswer && hasOpponent && !accepted) {
       notify("🔄 Ton adversaire a modifié la proposition.");
     }
   }, [match, waitingOnOpponent, iMustAnswer, hasOpponent, accepted, notify]);
 
-  /* ── share content ── */
+  /* ── share ── */
   const appOrigin = typeof window !== "undefined" ? window.location.origin : "";
   const inviteLink = match ? `${appOrigin}/?code=${match.inviteCode}` : "";
   const shareMessage = match
@@ -406,7 +394,6 @@ export function RendezVousApp() {
       const r = await fetch(`/api/matches/code/${code}`, { cache: "no-store" });
       const d = (await r.json()) as { match?: Match; error?: string };
       if (!d.match) { setJoinError(d.error ?? "Code introuvable."); return; }
-      /* register as guest if slot is free */
       if (!d.match.guestName || d.match.guestName === pseudo) {
         const jr = await fetch(`/api/matches/${d.match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "join", playerName: pseudo }) });
         const jd = (await jr.json()) as { match?: Match; error?: string };
@@ -424,7 +411,6 @@ export function RendezVousApp() {
   const patch = useCallback(async (body: Record<string, unknown>, msg?: string) => {
     if (!match) return; setSaving(true);
     try {
-      /* Auth requires the connected account pseudo on every action (review auth §5) */
       const payload = { ...body, playerName: body.playerName ?? pseudo };
       const r = await fetch(`/api/matches/${match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const d = (await r.json()) as { match?: Match; moves?: Move[]; error?: string };
@@ -453,14 +439,10 @@ export function RendezVousApp() {
     } catch { /* */ } finally { setSelectedSquare(null); setSaving(false); }
   }
 
-  /* Promotion picker (review 3.2 §1) */
   function maybePromote(from: string, to: string) {
     const target = chess.get(to as Square);
     const isPromotion = target?.type === "p" && (to.endsWith("8") || to.endsWith("1"));
-    if (isPromotion) {
-      setPromotionPending({ from, to });
-      return;
-    }
+    if (isPromotion) { setPromotionPending({ from, to }); return; }
     void sendMove(from, to);
   }
 
@@ -475,6 +457,7 @@ export function RendezVousApp() {
     try { await navigator.clipboard.writeText(text); notify(msg); } catch { notify("Copie impossible"); }
   }
 
+  /* ── Notifications ── */
   async function enableNotifs() {
     if (!match) return;
     if (typeof Notification === "undefined") {
@@ -482,9 +465,21 @@ export function RendezVousApp() {
       return notify("Notifications non supportées par ce navigateur.");
     }
     try {
+      /* iOS 16.4+ : le push Web exige HTTPS ET une PWA installée (standalone). */
+      if (typeof window !== "undefined" && window.location.protocol !== "https:" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        setTutorialOpen(false);
+        notify("🔒 Les notifications iOS nécessitent une connexion HTTPS (déploiement en ligne). L'accès en HTTP local ne permet pas le push sur iPhone.");
+        return;
+      }
+      /* iOS 16.4+ : l'abonnement push n'est possible qu'en PWA installée (standalone). */
+      if (platform === "ios" && !standalone) {
+        setTutorialOpen(false);
+        notify("📲 Installe d'abord Joust depuis Safari → Partager → « Sur l'écran d'accueil », puis réouvre l'app pour activer les notifications.");
+        return;
+      }
+
       const perm = await Notification.requestPermission();
       if (perm !== "granted") {
-        /* Refusé (ou déjà refusé) : on ferme le tuto quand même — l'étape est terminée. */
         setPushSubscribed(false);
         setTutorialOpen(false);
         return notify("Notifications refusées. Réactive-les dans les réglages du navigateur.");
@@ -495,30 +490,41 @@ export function RendezVousApp() {
         setTutorialOpen(false);
         return notify("Erreur serveur : clé VAPID absente.");
       }
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(v.publicKey) });
 
-      /* L'abonnement navigateur est réussi → on valide le tuto IMMÉDIATEMENT. */
+      const swReady = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("sw-timeout")), 8000)),
+      ]);
+
+      const sub = await swReady.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(v.publicKey),
+      });
+
       setPushSubscribed(true);
       setTutorialOpen(false);
 
-      /* Enregistrement côté serveur (BDD) — vérifier la réponse réelle. */
       const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, subscription: sub.toJSON() }) });
       const d = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (r.ok) {
+        setServerPushSubscribed(true);
         notify("🔔 Notifications activées !");
       } else {
+        setServerPushSubscribed(false);
         notify(`⚠️ Abonné mais non enregistré sur le serveur (${d?.error ?? r.status}).`);
       }
-    } catch {
-      /* Quoi qu'il arrive (Service Worker indisponible, abonnement interdit…), on ferme le tuto. */
+    } catch (err) {
       setTutorialOpen(false);
       setPushSubscribed(false);
-      notify("Abonnement impossible. Vérifie que l'app est installée (écran d'accueil).");
+      if (err instanceof Error && err.message === "sw-timeout") {
+        notify("Service worker trop lent. Réessaie dans un instant.");
+      } else {
+        notify("Abonnement impossible. Vérifie que l'app est installée (écran d'accueil).");
+      }
     }
   }
 
-  /* Test push : envoie une notification de test à tous les appareils abonnés du duel. */
+  /* Push manuel de test. */
   async function testPush() {
     if (!match) return;
     try {
@@ -583,7 +589,7 @@ export function RendezVousApp() {
               <span className="text-sm font-extrabold tracking-tight text-white">Joust</span>
             </div>
             <div className="flex items-center gap-2">
-              {match && <button type="button" onClick={() => void testPush()} aria-label="Tester la notification" title="Envoyer une notification de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
+              {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
               {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
               {pseudo && <div className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></div>}
               {authUser && <button type="button" onClick={() => void logout()} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
@@ -594,7 +600,7 @@ export function RendezVousApp() {
 
       <main className="relative z-10 mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center px-5 py-8">
 
-        {/* ══ 1. AUTH (register / login) ══ */}
+        {/* ══ 1. AUTH ══ */}
         {screen === "auth" && (
           <div className="anim-fade-up w-full space-y-6">
             <div className="text-center">
@@ -627,7 +633,7 @@ export function RendezVousApp() {
           </div>
         )}
 
-        {/* ══ 2. HOME — create or join ══ */}
+        {/* ══ 2. HOME ══ */}
         {screen === "home" && (
           <div className="anim-fade-up w-full space-y-6">
             <div className="text-center"><Badge tone="accent">{pseudo}</Badge><h1 className="mt-4 text-3xl font-black tracking-tight text-white">Joust</h1></div>
@@ -682,7 +688,7 @@ export function RendezVousApp() {
         {screen === "match" && match && (
           <div className="w-full space-y-4">
 
-            {/* — waiting for opponent to join — */}
+            {/* — waiting for opponent — */}
             {!hasOpponent && (
               <div className="anim-fade-up space-y-5">
                 <div className="text-center"><Badge tone="warn"><Dot /> En attente d'un adversaire</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">Ta joust</h2></div>
@@ -721,7 +727,6 @@ export function RendezVousApp() {
                     <span className="text-[10px] font-black text-[#3a3851]">VS</span>
                     <div className="flex flex-col items-center gap-2"><Avatar name={opponentName} tone="b" size="lg" /><span className="text-[11px] font-extrabold text-white">{opponentName}</span></div>
                   </div>
-
                   {!editing ? (
                     <>
                       <div className="mt-6 space-y-3 rounded-2xl bg-white/[0.02] p-4 ring-1 ring-white/[0.04]">
@@ -866,7 +871,7 @@ export function RendezVousApp() {
         </div>
       )}
 
-      {/* Promotion modal (review 3.2 §1) */}
+      {/* Promotion modal */}
       {promotionPending && (
         <div className="fixed inset-0 z-[58] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={() => setPromotionPending(null)}>
           <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -874,10 +879,7 @@ export function RendezVousApp() {
             <p className="mt-3 text-sm font-black text-white">Choisis ta pièce</p>
             <div className="mt-4 grid grid-cols-4 gap-2">
               {(["q", "r", "b", "n"] as const).map((p) => (
-                <button key={p} type="button" onClick={() => {
-                  void sendMove(promotionPending.from, promotionPending.to, p);
-                  setPromotionPending(null);
-                }} className="grid h-16 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.03] transition active:scale-90 hover:bg-white/[0.08]">
+                <button key={p} type="button" onClick={() => { void sendMove(promotionPending.from, promotionPending.to, p); setPromotionPending(null); }} className="grid h-16 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.03] transition active:scale-90 hover:bg-white/[0.08]">
                   <ChessPiece color={myColor} type={p} className="h-10 w-10" />
                 </button>
               ))}
@@ -893,10 +895,9 @@ export function RendezVousApp() {
           <div className="anim-fade-up max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[28px] border border-white/[0.08] bg-[#101018] p-6 shadow-2xl sm:rounded-[28px]">
             <div className="flex items-start justify-between gap-4"><div><Badge tone="accent">Notifications</Badge><h2 className="mt-3 text-xl font-black tracking-tight text-white">Soyez prévenus à l'heure H</h2><p className="mt-1.5 text-xs leading-5 text-[#6b6882]">Installe joust sur ton écran d'accueil, puis autorise les notifications.</p></div><button type="button" onClick={() => setTutorialOpen(false)} aria-label="Fermer" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={15} /></button></div>
             <div className="mt-5 flex items-center gap-4 rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.05]">{[{ label: "Installée", done: standalone }, { label: "Notifications", done: pushSubscribed }].map((s) => <div key={s.label} className="flex items-center gap-2"><span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500 text-[#0a0f0a]" : "bg-white/[0.05] text-[#6b6882] ring-1 ring-white/[0.08]"}`}>{s.done ? <Check size={11} /> : "·"}</span><span className={`text-[10px] font-bold ${s.done ? "text-emerald-300" : "text-[#6b6882]"}`}>{s.label}</span></div>)}</div>
-            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Partage ton Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
+            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
             {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu'une fois l'app installée et ouverte depuis l'écran d'accueil (iOS 16.4+).</p></div>}
-            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
-            <div className="mt-4 rounded-2xl bg-violet-600/[0.10] px-4 py-3 ring-1 ring-violet-500/20"><p className="text-xs text-violet-200 font-bold">Astuce : envoie le message copié, ou montre le QR pour inviter ton ami.</p></div>
+            <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Active les notifications</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
             <div className="mt-5 border-t border-white/[0.05] pt-4"><Btn variant="ghost" onClick={() => setTutorialOpen(false)}>Plus tard</Btn></div>
           </div>
         </div>

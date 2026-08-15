@@ -7,8 +7,12 @@ export const metadata: Metadata = {
   description: "Une partie d'échecs, à l'heure dite, entre deux amis.",
   applicationName: "Joust",
   manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon.svg", apple: "/icons/icon-512.png" },
+  icons: { icon: "/icon.svg", apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Joust" },
+  other: {
+    "apple-mobile-web-app-title": "Joust",
+    "apple-mobile-web-app-capable": "yes",
+  },
   formatDetection: { telephone: false },
 };
 
