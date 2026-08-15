@@ -162,6 +162,26 @@ export function RendezVousApp() {
   const prevWaitingRef = useRef(false);
   const platform = detectPlatform();
   const standalone = isStandalone();
+  /* Diagnostic navigateur pour iOS — affiché dans le tuto pour comprendre le blocage. */
+  const [diag, setDiag] = useState<Record<string, string>>({});
+  const buildDiag = useCallback(() => {
+    const d: Record<string, string> = {};
+    d["URL"] = typeof window !== "undefined" ? `${window.location.host}${window.location.pathname}` : "N/A";
+    d["Contexte sécurisé"] = typeof window !== "undefined" && window.isSecureContext ? "Oui (HTTPS)" : "NON (HTTP)";
+    d["Plateforme"] = platform;
+    d["Installée (PWA)"] = standalone ? "Oui" : "Non";
+    d["iOS 16.4+"] = platform === "ios" ? "Oui" : "N/A";
+    d["Notification API"] = typeof Notification !== "undefined" ? "Disponible" : "Absente";
+    d["Notification permission"] = typeof Notification !== "undefined" ? Notification.permission : "N/A";
+    d["Service Worker"] = "serviceWorker" in navigator ? "Disponible" : "Absent";
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready
+        .then((reg) => { d["SW état"] = "Actif"; d["PushManager"] = "pushManager" in reg ? "Oui" : "Non"; setDiag({ ...d }); })
+        .catch(() => { d["SW état"] = "Erreur/Non installé"; setDiag({ ...d }); });
+    }
+    setDiag({ ...d });
+  }, [platform, standalone]);
+  useEffect(() => { buildDiag(); }, [buildDiag]);
 
   /* create form */
   const [timeOfDay, setTimeOfDay] = useState("20:30");
@@ -910,6 +930,18 @@ export function RendezVousApp() {
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
             {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu'une fois l'app installée et ouverte depuis l'écran d'accueil (iOS 16.4+).</p></div>}
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Active les notifications</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
+            <div className="mt-4 rounded-2xl bg-white/[0.02] p-3 ring-1 ring-white/[0.05]">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Diagnostic</p>
+              <dl className="mt-2 space-y-1">
+                {Object.entries(diag).map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between gap-3">
+                    <dt className="text-[11px] font-bold text-[#6b6882]">{k}</dt>
+                    <dd className="text-[11px] font-mono font-bold text-[#c4c0d4]">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <button type="button" onClick={buildDiag} className="mt-2 w-full rounded-lg bg-white/[0.04] py-1.5 text-[10px] font-bold text-violet-300 ring-1 ring-white/[0.06] active:scale-95">Rafraîchir</button>
+            </div>
             <div className="mt-5 border-t border-white/[0.05] pt-4"><Btn variant="ghost" onClick={() => setTutorialOpen(false)}>Plus tard</Btn></div>
           </div>
         </div>
