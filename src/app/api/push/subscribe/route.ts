@@ -8,6 +8,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       matchId?: string;
       playerName?: string;
+      notify5min?: boolean;
       subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
     };
 
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
       endpoint,
       p256dh,
       auth,
+      notify5min: typeof body.notify5min === "boolean" ? body.notify5min : true,
     });
 
     return Response.json({ ok: true });

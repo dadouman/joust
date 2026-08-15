@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
 
     const rows = await db
-      .select({ id: pushSubscriptions.id })
+      .select({ id: pushSubscriptions.id, notify5min: pushSubscriptions.notify5min })
       .from(pushSubscriptions)
       .where(
         and(
@@ -26,7 +26,10 @@ export async function GET(request: NextRequest) {
       )
       .limit(1);
 
-    return Response.json({ subscribed: rows.length > 0 });
+    if (rows.length === 0) {
+      return Response.json({ subscribed: false });
+    }
+    return Response.json({ subscribed: true, notify5min: rows[0].notify5min });
   } catch {
     return Response.json({ error: "Vérification impossible." }, { status: 500 });
   }

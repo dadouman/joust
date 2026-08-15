@@ -47,6 +47,9 @@ export const matches = pgTable(
     readyWhite: timestamp("ready_white", { withTimezone: true }),
     readyBlack: timestamp("ready_black", { withTimezone: true }),
 
+    /* ── 5-minute pre-game reminder (push) ── */
+    reminder5SentAt: timestamp("reminder_5_sent_at", { withTimezone: true }),
+
     /* scheduled | playing | completed */
     status: varchar("status", { length: 24 }).notNull().default("scheduled"),
 
@@ -92,6 +95,8 @@ export const pushSubscriptions = pgTable(
     endpoint: text("endpoint").notNull().unique(),
     p256dh: text("p256dh").notNull(),
     auth: text("auth").notNull(),
+    /* User preference: receive the 5-minute pre-game reminder (toggleable in the tutorial). */
+    notify5min: boolean("notify_5min").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("push_subs_match_idx").on(table.matchId)],

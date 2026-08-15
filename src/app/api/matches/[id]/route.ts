@@ -5,7 +5,7 @@ import { matchMoves, matches } from "@/db/schema";
 import { assertCanActAs } from "@/lib/auth";
 import { getGame } from "@/lib/games";
 import { broadcastMatchChange } from "@/lib/realtime";
-import { notifyMatch } from "@/lib/push";
+import { notifyMatch, notifyPlayer } from "@/lib/push";
 import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
 import { isTimeControl } from "@/lib/time-control";
@@ -103,7 +103,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .set({ guestName: cleanName, blackPlayer: cleanName, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "👋 Un adversaire !", `${cleanName} a rejoint votre Joust.`);
+      /* Notification ciblée au créateur uniquement : « proposition de joust reçue » */
+      notifyPlayer(id, match.creatorName, "👋 Un adversaire !", `${cleanName} a rejoint votre Joust.`);
       broadcastMatchChange(id, { action: "join" });
       return Response.json({ match: serializeMatch(updated), moves: [] });
     }
@@ -112,11 +113,15 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     if (body.action === "accept") {
       const denied = await requireActor();
       if (denied) return denied;
+      const proposer = match.timeControlBy === "creator" ? match.guestName : match.creatorName;
+      const responder = playerName;
       const [updated] = await db
         .update(matches)
         .set({ inviteStatus: "accepted", timeControlConfirmed: true, updatedAt: now })
         .where(eq(matches.id, id))
         .returning();
+      /* Réponse à une proposition : le partenaire a validé → notifier l'autre joueur */
+      notifyPlayer(id, proposer || match.creatorName, "✅ Proposition acceptée !", `${responder} a validé les paramètres de la joust.`);
       notifyMatch(id, "🤝 Joust validée !", `${match.guestName || "Votre ami"} a accepté la joust.`);
       broadcastMatchChange(id, { action: "accept" });
       return Response.json({ match: serializeMatch(updated) });
@@ -137,6 +142,8 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .map(Number)
         .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
         .join(",");
+      const proposer = by === "guest" ? match.guestName : match.creatorName;
+      const target = by === "guest" ? match.creatorName : match.guestName;
       const [updated] = await db
         .update(matches)
         .set({
@@ -151,7 +158,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         })
         .where(eq(matches.id, id))
         .returning();
-      notifyMatch(id, "🔄 Nouvelle proposition", `${by === "guest" ? match.guestName : match.creatorName} propose d’autres paramètres.`);
+      /* Réponse à une proposition : contre-proposition → notifier le partenaire ciblé */
+      if (target) notifyPlayer(id, target, "🔄 Contre-proposition", `${proposer} propose d’autres paramètres.`);
+      notifyMatch(id, "🔄 Nouvelle proposition", `${proposer} propose d’autres paramètres.`);
       broadcastMatchChange(id, { action: "counter" });
       return Response.json({ match: serializeMatch(updated) });
     }
@@ -190,6 +199,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
 
+      /* « Adversaire prêt » → notifier l'autre joueur */
+      const targetReady = isWhitePlayer ? match.blackPlayer : match.whitePlayer;
+      if (targetReady) notifyPlayer(id, targetReady, "✅ Ton adversaire est prêt !", `${playerName} est prêt à jouer — à toi de valider.`);
       notifyMatch(id, "✅ Prêt !", `${playerName} est prêt à jouer.`);
       return Response.json({ match: serializeMatch(updated) });
     }
@@ -288,6 +300,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           lastMoveAt: null,
           readyWhite: null,
           readyBlack: null,
+          reminder5SentAt: null,
           drawStatus: "none",
           drawProposedBy: null,
           result: null,
@@ -320,6 +333,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           lastMoveAt: null,
           readyWhite: null,
           readyBlack: null,
+          reminder5SentAt: null,
           whitePlayer: match.blackPlayer,
           blackPlayer: match.whitePlayer,
           drawStatus: "none",

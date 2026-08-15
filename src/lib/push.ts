@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import fs from "node:fs";
 import path from "node:path";
 import webpush from "web-push";
@@ -55,6 +55,7 @@ export async function saveSubscription(input: {
   endpoint: string;
   p256dh: string;
   auth: string;
+  notify5min?: boolean;
 }) {
   await db
     .insert(pushSubscriptions)
@@ -66,6 +67,7 @@ export async function saveSubscription(input: {
         playerName: input.playerName,
         p256dh: input.p256dh,
         auth: input.auth,
+        ...(typeof input.notify5min === "boolean" ? { notify5min: input.notify5min } : {}),
       },
     });
 }
@@ -79,6 +81,10 @@ function rowToPushSubscription(row: SubRow) {
     endpoint: row.endpoint,
     keys: { p256dh: row.p256dh, auth: row.auth },
   };
+}
+
+function payload(title: string, body: string, url = "/") {
+  return JSON.stringify({ title, body, url, icon: "/icons/icon-512.png", badge: "/icons/icon-512.png" });
 }
 
 /** Send a push notification to every device subscribed to a match. Fire-and-forget. */
@@ -95,12 +101,7 @@ export async function sendPushToMatch(
       .where(eq(pushSubscriptions.matchId, matchId));
 
     const results = await Promise.allSettled(
-      rows.map((row) =>
-        webpush.sendNotification(
-          rowToPushSubscription(row),
-          JSON.stringify({ title, body, url, icon: "/icons/icon-512.png", badge: "/icons/icon-512.png" }),
-        ),
-      ),
+      rows.map((row) => webpush.sendNotification(rowToPushSubscription(row), payload(title, body, url))),
     );
     return results.filter((r) => r.status === "fulfilled").length;
   } catch {
@@ -111,4 +112,54 @@ export async function sendPushToMatch(
 /** Fire-and-forget variant for route handlers. */
 export function notifyMatch(matchId: string, title: string, body: string, url = "/") {
   void sendPushToMatch(matchId, title, body, url).catch(() => undefined);
+}
+
+/* ── Targeted notifications (per player) ── */
+
+/** Send a push notification only to a specific player's subscribed devices. */
+export async function sendPushToPlayer(
+  matchId: string,
+  playerName: string,
+  title: string,
+  body: string,
+  url = "/",
+  opts: { exclude5minDisabled?: boolean } = {},
+): Promise<number> {
+  try {
+    const conditions = [
+      eq(pushSubscriptions.matchId, matchId),
+      eq(pushSubscriptions.playerName, playerName),
+    ];
+    /* For the 5-min reminder, only send to devices where the user kept the preference on. */
+    if (opts.exclude5minDisabled) {
+      conditions.push(eq(pushSubscriptions.notify5min, true));
+    }
+
+    const rows = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(and(...conditions));
+    const results = await Promise.allSettled(
+      rows.map((row) => webpush.sendNotification(rowToPushSubscription(row), payload(title, body, url))),
+    );
+    return results.filter((r) => r.status === "fulfilled").length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Fire-and-forget targeted notification for a specific player. */
+export function notifyPlayer(matchId: string, playerName: string, title: string, body: string, url = "/") {
+  void sendPushToPlayer(matchId, playerName, title, body, url).catch(() => undefined);
+}
+
+/* ── 5-minute reminder ── */
+
+/** Fire the 5-minute pre-game reminder to players who enabled it (once per occurrence). */
+export function notify5minReminder(matchId: string, players: string[]) {
+  const title = "⏰ Début dans 5 minutes !";
+  const body = "La joust va bientôt commencer. Prépare-toi !";
+  for (const p of players) {
+    void sendPushToPlayer(matchId, p, title, body, "/", { exclude5minDisabled: true }).catch(() => undefined);
+  }
 }

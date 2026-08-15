@@ -157,6 +157,8 @@ export function RendezVousApp() {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [serverPushSubscribed, setServerPushSubscribed] = useState<boolean | null>(null);
+  const [notify5min, setNotify5min] = useState(true);
+  const notify5minRef = useRef(true);
   const [editing, setEditing] = useState(false);
   const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
   const prevWaitingRef = useRef(false);
@@ -276,7 +278,7 @@ export function RendezVousApp() {
         if (localSub && match?.id && pseudo) {
           fetch(`/api/push/status?matchId=${encodeURIComponent(match.id)}&playerName=${encodeURIComponent(pseudo)}`, { cache: "no-store" })
             .then((r) => r.json().catch(() => null))
-            .then((d) => { if (!cancelled && d && typeof d.subscribed === "boolean") setServerPushSubscribed(d.subscribed); })
+          .then((d) => { if (!cancelled && d && typeof d.subscribed === "boolean") { setServerPushSubscribed(d.subscribed); if (typeof d.notify5min === "boolean") { setNotify5min(d.notify5min); notify5minRef.current = d.notify5min; } } })
             .catch(() => undefined);
         }
       })
@@ -530,7 +532,7 @@ export function RendezVousApp() {
       setTutorialOpen(false);
       console.log("[push] Abonnement navigateur réussi:", sub.endpoint.slice(0, 60));
 
-      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, subscription: sub.toJSON() }) });
+      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matchId: match.id, playerName: pseudo, notify5min: notify5minRef.current, subscription: sub.toJSON() }) });
       const d = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (r.ok) {
         setServerPushSubscribed(true);
@@ -930,6 +932,23 @@ export function RendezVousApp() {
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>
             {platform === "ios" && !standalone && <div className="ml-10 mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2.5 ring-1 ring-amber-500/20"><p className="text-[11px] leading-4 text-amber-200/90">⚠️ Sur iPhone, les notifications ne marchent qu'une fois l'app installée et ouverte depuis l'écran d'accueil (iOS 16.4+).</p></div>}
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>2</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Active les notifications</p><p className="mt-0.5 text-[11px] text-[#6b6882]">Tu seras prévenu au top départ, même app fermée.</p><div className="mt-2.5"><Btn onClick={enableNotifs} disabled={pushSubscribed} variant={pushSubscribed ? "secondary" : "primary"} className="!py-2.5 text-xs">{pushSubscribed ? "Activées ✓" : "Activer"}</Btn></div></div></div>
+            {pushSubscribed && (
+              <button
+                type="button"
+                onClick={() => {
+                  const v = !notify5min;
+                  setNotify5min(v);
+                  notify5minRef.current = v;
+                  notify("⏰ Rappel 5 min " + (v ? "activé" : "désactivé") + " !");
+                }}
+                className="mt-4 flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
+              >
+                <span className="flex items-center gap-2 text-[11px] font-bold text-[#c4c0d4]">⏰ Rappel 5 min avant le début</span>
+                <span className={`relative h-6 w-11 rounded-full transition-colors ${notify5min ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${notify5min ? "left-[22px]" : "left-0.5"}`} />
+                </span>
+              </button>
+            )}
             <div className="mt-4 rounded-2xl bg-white/[0.02] p-3 ring-1 ring-white/[0.05]">
               <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Diagnostic</p>
               <dl className="mt-2 space-y-1">
