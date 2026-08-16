@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, BellRing, Check, ChevronRight, Copy, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Check, ChevronDown, ChevronRight, ChevronUp, Copy, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { listenToMatch } from "@/lib/realtime-client";
@@ -258,6 +258,8 @@ export function RendezVousApp() {
   const [joinError, setJoinError] = useState("");
   /* Menu "+" : choix entre créer ou rejoindre une joust */
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  /* Card validée dépliée dans la liste (au lieu d'un écran séparé) */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -801,8 +803,18 @@ export function RendezVousApp() {
     } catch { notify("Envoi impossible."); } finally { setSaving(false); }
   }
 
+  /* Retour simple à l'accueil depuis le détail d'une card (sans annuler). */
+  function goHome() {
+    localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
+  }
+
   function leaveMatch() {
     void cancelScheduledNotif();
+    /* Quitter une joust active l'annule côté serveur (statut « cancelled »),
+       ce qui retire définitivement la card de la liste. */
+    if (match && (match.status === "scheduled" || match.status === "playing") && !matchOver) {
+      void patch({ action: "cancel", playerName: pseudo });
+    }
     localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
   }
 
@@ -859,8 +871,8 @@ export function RendezVousApp() {
         <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 pt-[var(--safe-top)] backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
-              {(screen === "create" || screen === "join") ? (
-                <button onClick={() => setScreen("home")} aria-label="Retour" className="grid h-7 w-7 place-items-center rounded-xl bg-white/[0.04] text-[#c4c0d4] ring-1 ring-white/[0.06] active:scale-90"><ArrowLeft size={15} /></button>
+              {(screen === "create" || screen === "join" || screen === "match") ? (
+                <button onClick={() => (screen === "match" ? goHome() : setScreen("home"))} aria-label="Retour" className="grid h-7 w-7 place-items-center rounded-xl bg-white/[0.04] text-[#c4c0d4] ring-1 ring-white/[0.06] active:scale-90"><ArrowLeft size={15} /></button>
               ) : (
                 <div className="grid h-7 w-7 place-items-center rounded-xl bg-violet-600 shadow-md shadow-violet-600/30"><ChessPiece color="w" type="n" className="h-5 w-5 text-white" /></div>
               )}
@@ -955,9 +967,15 @@ export function RendezVousApp() {
                     const hhLeft = String(Math.floor((msLeft % 86_400_000) / 3_600_000)).padStart(2, "0");
                     const mmLeft = String(Math.floor((msLeft % 3_600_000) / 60_000)).padStart(2, "0");
                     const timerLabel = ddLeft > 0 ? `${ddLeft}j ${hhLeft}:${mmLeft}` : `${hhLeft}:${mmLeft}`;
+                    /* La card validée se déplie dans la liste (fusion card + détail).
+                       < 1h restante → affichage automatiquement en grand. */
+                    const withinHour = msLeft > 0 && msLeft <= 3_600_000;
+                    const expanded = expandedId === m.id;
+                    const showDetail = (armed || playing) && (expanded || withinHour || mUnlocked);
                     return (
-                      <div key={m.id} className="w-full overflow-hidden rounded-[20px] border border-white/[0.06] bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 hover:border-violet-500/30">
-                        <button onClick={() => void openMatch(m)} className="block w-full p-4 text-left">
+                      <div key={m.id} className={`w-full overflow-hidden rounded-[20px] border bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 ${showDetail ? "border-violet-500/40 ring-1 ring-violet-500/20" : "border-white/[0.06] hover:border-violet-500/30"}`}>
+                        {/* En-tête compact cliquable */}
+                        <button onClick={() => { if (armed) { setExpandedId(expanded ? null : m.id); } else { void openMatch(m); } }} className="block w-full p-4 text-left">
                           <div className="flex items-center gap-3.5">
                             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
                             <div className="min-w-0 flex-1">
@@ -973,15 +991,43 @@ export function RendezVousApp() {
                                 {!mUnlocked && <span className="rounded-full bg-violet-500/[0.1] px-2 py-0.5 font-mono text-[10px] font-bold text-violet-200 ring-1 ring-violet-500/25">{timerLabel}</span>}
                               </div>
                             </div>
-                            <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />
+                            {armed ? (expanded ? <ChevronUp size={16} className="shrink-0 text-[#3a3851]" /> : <ChevronDown size={16} className="shrink-0 text-[#3a3851]" />) : <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />}
                           </div>
                         </button>
-                        {/* L'heure est arrivée : un seul bouton pour rentrer et valider l'arrivée. */}
-                        {mUnlocked && armed && !arrived && !playing && (
-                          <div className="border-t border-white/[0.05] bg-white/[0.02] px-4 py-2.5">
-                            <button onClick={() => void openMatch(m)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-2.5 text-xs font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97]">
-                              <Zap size={14} /> Je suis arrivé(e)
-                            </button>
+                        {/* Version dépliée en grand (fusion card/détail) pour les jousts validés ou en cours */}
+                        {showDetail && (
+                          <div className="anim-fade-up border-t border-white/[0.05]">
+                            {/* Qui contre qui */}
+                            <div className="px-5 pt-4 text-center">
+                              <h2 className="text-xl font-black tracking-tight text-white">{m.creatorName} <span className="text-violet-400">vs</span> {m.guestName || "…"}</h2>
+                              <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
+                              <p className="mt-1 text-xs font-bold text-[#6b6882]">♞ Échecs · {mTc?.label} ({mTc?.tag})</p>
+                            </div>
+                            {/* Timer hypnotique quand pas encore l'heure */}
+                            {!mUnlocked && (
+                              <div className="relative px-6 py-4 text-center">
+                                <div className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
+                                <div className="relative mx-auto flex items-baseline justify-center gap-1 font-mono text-3xl font-black tracking-tight text-white sm:text-4xl">
+                                  {ddLeft > 0 && <span className="text-violet-300">{ddLeft}<span className="ml-0.5 text-base text-violet-400">j</span></span>}
+                                  <span className="tabular-nums">{hhLeft}</span>
+                                  <span className="anim-pulse text-violet-400">:</span>
+                                  <span className="tabular-nums">{mmLeft}</span>
+                                </div>
+                              </div>
+                            )}
+                            {/* Bouton d'arrivée quand l'heure est arrivée */}
+                            {mUnlocked && armed && !arrived && !playing && (
+                              <div className="px-5 pb-4 pt-2 text-center">
+                                <button onClick={() => void openMatch(m)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-3 text-sm font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97]">
+                                  <Zap size={16} /> Je suis arrivé(e)
+                                </button>
+                              </div>
+                            )}
+                            {mUnlocked && armed && arrived && !playing && (
+                              <div className="px-5 pb-4 pt-2 text-center">
+                                <div className="rounded-xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — attente de {opp || "l'adversaire"}…</p></div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
