@@ -1032,21 +1032,27 @@ export function RendezVousApp() {
                jours dans un bloc séparé sous le timer, et l'annulation se fait
                en 2 clics (le 1er passe le bouton en rouge). */}
             {arrivalCheckActive && (
-              <div className="anim-fade-up space-y-5">
-                <div className="text-center">
-                  <Badge tone={!arrivalUnlocked ? "warn" : bothArrived ? "ok" : "accent"}><Dot on /> {arrivalUnlocked ? "Validation d'arrivée" : "Ta prochaine joust"}</Badge>
-                  <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
-                  {!arrivalUnlocked && (
-                    <p className="mt-2 inline-flex items-center gap-2 text-sm font-bold text-[#c4c0d4]">
-                      {new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
-                      <span className="h-1 w-1 rounded-full bg-violet-400" />
-                    </p>
-                  )}
+              /* Cartouche réutilisable : date → joueurs → jeu → timer+récurrence → annuler */
+              <Card className="anim-fade-up-d1 overflow-hidden p-0">
+                {/* 1. Prochaine date */}
+                <div className="border-b border-white/[0.05] bg-gradient-to-b from-violet-600/[0.08] to-transparent px-5 py-3 text-center">
+                  <p className="inline-flex items-center justify-center gap-2 text-sm font-bold text-[#c4c0d4]">
+                    {arrivalUnlocked ? "C'est l'heure !" : new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+                    <Dot on />
+                  </p>
                 </div>
 
+                {/* 2. Qui contre qui */}
+                <div className="px-5 pt-5 text-center">
+                  <h2 className="text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
+                  {/* 3. Le jeu */}
+                  <p className="mt-1.5 text-xs font-bold text-[#6b6882]">♞ Échecs · {tc.label} ({tc.tag})</p>
+                </div>
+
+                {/* 4. Timer + récurrence OU validation d'arrivée */}
                 {!arrivalUnlocked ? (
-                  <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                    <div className="relative bg-gradient-to-b from-violet-600/[0.08] via-transparent to-transparent px-6 py-6 text-center">
+                  <>
+                    <div className="relative mt-5 bg-gradient-to-b from-violet-600/[0.08] via-transparent to-transparent px-6 py-6 text-center">
                       {/* Halo hypnotique */}
                       <div className="pointer-events-none absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
                       {/* Timer compact sur une ligne */}
@@ -1066,9 +1072,9 @@ export function RendezVousApp() {
                         <div className="flex gap-1">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
                       </div>
                     </div>
-                  </Card>
+                  </>
                 ) : (
-                  <Card className="anim-fade-up-d1 overflow-hidden p-0">
+                  <div className="bg-[#1a1626]">
                     <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
                       <div className="flex flex-col items-center gap-3 px-3 py-6">
                         <Avatar name={match.creatorName} tone="a" />
@@ -1127,7 +1133,7 @@ export function RendezVousApp() {
                         </div>
                       )}
                     </div>
-                  </Card>
+                  </div>
                 )}
                 <button
                   type="button"
@@ -1139,7 +1145,7 @@ export function RendezVousApp() {
                 >
                   {confirmCancel ? "⚠️ Confirmer l'annulation" : "Annuler la joust"}
                 </button>
-              </div>
+              </Card>
             )}
 
             {/* — joust cancelled (par un joueur) — */}
