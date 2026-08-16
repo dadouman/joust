@@ -260,6 +260,8 @@ export function RendezVousApp() {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   /* Card validée dépliée dans la liste (au lieu d'un écran séparé) */
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /* Détrompeur 2 clics pour annuler un joust directement depuis la card dépliée */
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
   /* Filtres : bouton on/off « validés » + entonnoir multi-états */
   const [onlyValidated, setOnlyValidated] = useState(false);
   const [funnelOpen, setFunnelOpen] = useState(false);
@@ -847,6 +849,31 @@ export function RendezVousApp() {
     setScreen("home");
     void loadMyMatches();
   }
+
+  /* Annulation d'un joust directement depuis sa card dépliée (détrompeur 2 clics). */
+  const cancelCardTimer = useRef<number | null>(null);
+  async function handleCardCancelClick(m: Match) {
+    if (cancelConfirmId !== m.id) {
+      setCancelConfirmId(m.id);
+      if (cancelCardTimer.current) window.clearTimeout(cancelCardTimer.current);
+      cancelCardTimer.current = window.setTimeout(() => setCancelConfirmId(null), 4000);
+      return;
+    }
+    if (cancelCardTimer.current) window.clearTimeout(cancelCardTimer.current);
+    setCancelConfirmId(null);
+    try {
+      const r = await fetch(`/api/matches/${m.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", playerName: pseudo }),
+      });
+      const d = (await r.json()) as { match?: Match; error?: string };
+      if (d.error) notify(d.error);
+      else notify("Joust annulée");
+    } catch { notify("Annulation impossible"); }
+    if (match?.id === m.id) { localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); }
+    setMyMatches((prev) => prev.filter((x) => x.id !== m.id));
+  }
   function toggleDay(d: number) { setDays((c) => (c.includes(d) ? c.filter((x) => x !== d) : [...c, d])); }
 
   /* board */
@@ -1027,11 +1054,15 @@ export function RendezVousApp() {
                         {/* Version dépliée en grand (fusion card/détail) pour les jousts validés ou en cours */}
                         {showDetail && (
                           <div className="anim-fade-up border-t border-white/[0.05]">
-                            {/* Qui contre qui */}
+                            {/* 1. Date et heure du prochain match en haut */}
                             <div className="px-5 pt-4 text-center">
-                              <h2 className="text-xl font-black tracking-tight text-white">{m.creatorName} <span className="text-violet-400">vs</span> {m.guestName || "…"}</h2>
-                              <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
-                              <p className="mt-1 text-xs font-bold text-[#6b6882]">♞ Échecs · {mTc?.label} ({mTc?.tag})</p>
+                              <p className="text-lg font-black tracking-tight text-white">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
+                              {/* 2. Adversaire en dessous */}
+                              <h2 className="mt-2 inline-flex items-center gap-2 rounded-2xl bg-white/[0.03] px-4 py-2 ring-1 ring-white/[0.06]">
+                                <Avatar name={opp || m.creatorName} tone="b" />
+                                <span className="text-sm font-extrabold text-white">{opp || "En attente d'un joueur…"}</span>
+                              </h2>
+                              <p className="mt-2 text-xs font-bold text-[#6b6882]">♞ Échecs · {mTc?.label} ({mTc?.tag})</p>
                             </div>
                             {/* Timer hypnotique quand pas encore l'heure */}
                             {!mUnlocked && (
@@ -1047,17 +1078,30 @@ export function RendezVousApp() {
                             )}
                             {/* Bouton d'arrivée quand l'heure est arrivée */}
                             {mUnlocked && armed && !arrived && !playing && (
-                              <div className="px-5 pb-4 pt-2 text-center">
+                              <div className="px-5 pt-2 text-center">
                                 <button onClick={() => void openMatch(m)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-3 text-sm font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97]">
                                   <Zap size={16} /> Je suis arrivé(e)
                                 </button>
                               </div>
                             )}
                             {mUnlocked && armed && arrived && !playing && (
-                              <div className="px-5 pb-4 pt-2 text-center">
+                              <div className="px-5 pt-2 text-center">
                                 <div className="rounded-xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — attente de {opp || "l'adversaire"}…</p></div>
                               </div>
                             )}
+                            {/* Annuler la joust (détrompeur 2 clics, comme le flux existant) */}
+                            <div className="px-5 pb-3 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCardCancelClick(m)}
+                                className={`w-full rounded-2xl py-2 text-sm font-extrabold transition-all duration-300 active:scale-[0.97] ${cancelConfirmId === m.id
+                                  ? "animate-pulse border border-rose-500/60 bg-rose-500/20 text-rose-200 shadow-lg shadow-rose-500/20"
+                                  : "border border-transparent text-[#6b6882] hover:text-[#c4c0d4]"
+                                }`}
+                              >
+                                {cancelConfirmId === m.id ? "⚠️ Confirmer l'annulation" : "Annuler la joust"}
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
