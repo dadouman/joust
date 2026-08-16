@@ -241,6 +241,8 @@ export function RendezVousApp() {
   const [notify5min, setNotify5min] = useState(true);
   const notify5minRef = useRef(true);
   const [editing, setEditing] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const cancelTimer = useRef<number | null>(null);
   const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
   const prevWaitingRef = useRef(false);
   const platform = detectPlatform();
@@ -780,6 +782,25 @@ export function RendezVousApp() {
     void cancelScheduledNotif();
     localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home");
   }
+
+  /* Annulation en 2 clics : 1er clic → le bouton passe en rouge,
+     2e clic → annulation réelle + notification à l'adversaire. */
+  function handleCancelClick() {
+    if (!match) return;
+    if (!confirmCancel) {
+      setConfirmCancel(true);
+      if (cancelTimer.current) window.clearTimeout(cancelTimer.current);
+      cancelTimer.current = window.setTimeout(() => setConfirmCancel(false), 4000);
+      return;
+    }
+    if (cancelTimer.current) window.clearTimeout(cancelTimer.current);
+    setConfirmCancel(false);
+    void patch({ action: "cancel", playerName: pseudo }, "Joust annulée");
+    localStorage.removeItem(MATCH_KEY);
+    setMatch(null);
+    setMoves([]);
+    setScreen("home");
+  }
   function toggleDay(d: number) { setDays((c) => (c.includes(d) ? c.filter((x) => x !== d) : [...c, d])); }
 
   /* board */
@@ -997,7 +1018,7 @@ export function RendezVousApp() {
             )}
 
             {/* — declined — */}
-            {declined && (
+            {declined && match.status !== "cancelled" && (
               <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d'autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div></Card></div>
             )}
 
@@ -1005,22 +1026,45 @@ export function RendezVousApp() {
                La validation d'arrivée n'est possible qu'à l'heure prévue de la
                joust (jamais avant). Aucun chronomètre ne se déclenche
                automatiquement : seul l'ultimatum (envoi manuel par un joueur
-               arrivé) déclenche un décompte. Le départ est toujours manuel. */}
+               arrivé) déclenche un décompte. Le départ est toujours manuel.
+               Le timer est compact (une ligne), hypnotique, sans texte superflu.
+               La date apparaît sous le titre avec un point, la récurrence des
+               jours dans un bloc séparé sous le timer, et l'annulation se fait
+               en 2 clics (le 1er passe le bouton en rouge). */}
             {arrivalCheckActive && (
               <div className="anim-fade-up space-y-5">
                 <div className="text-center">
                   <Badge tone={!arrivalUnlocked ? "warn" : bothArrived ? "ok" : "accent"}><Dot on /> {arrivalUnlocked ? "Validation d'arrivée" : "Ta prochaine joust"}</Badge>
                   <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
-                  <p className="mt-1.5 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p>
+                  {!arrivalUnlocked && (
+                    <p className="mt-2 inline-flex items-center gap-2 text-sm font-bold text-[#c4c0d4]">
+                      {new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+                      <span className="h-1 w-1 rounded-full bg-violet-400" />
+                    </p>
+                  )}
                 </div>
 
                 {!arrivalUnlocked ? (
                   <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                    <div className="flex justify-center gap-1.5 border-b border-white/[0.05] bg-white/[0.015] px-4 py-3">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-8 w-8 place-items-center rounded-lg text-[10px] font-black ${on ? (isNext ? "bg-violet-500 text-white ring-2 ring-violet-300/50" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
-                    <div className="bg-gradient-to-b from-violet-600/[0.06] to-transparent px-6 pb-6 pt-6 text-center">
-                      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Départ dans</p>
-                      <div className="mt-3 font-mono text-5xl font-black tracking-tight text-white sm:text-6xl">{dd > 0 && <span className="text-violet-400">{dd}j </span>}{hh}<span className="anim-pulse text-violet-400">:</span>{mmv}<span className="anim-pulse text-violet-400">:</span>{ssv}</div>
-                      <p className="mt-3 text-xs capitalize text-[#6b6882]">{new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
+                    <div className="relative bg-gradient-to-b from-violet-600/[0.08] via-transparent to-transparent px-6 py-6 text-center">
+                      {/* Halo hypnotique */}
+                      <div className="pointer-events-none absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
+                      {/* Timer compact sur une ligne */}
+                      <div className="relative mx-auto flex items-baseline justify-center gap-1 font-mono text-3xl font-black tracking-tight text-white sm:text-4xl">
+                        {dd > 0 && <span className="text-violet-300">{dd}<span className="ml-0.5 text-base text-violet-400">j</span></span>}
+                        <span className="tabular-nums">{hh}</span>
+                        <span className="anim-pulse text-violet-400">:</span>
+                        <span className="tabular-nums">{mmv}</span>
+                        <span className="anim-pulse text-violet-400">:</span>
+                        <span className="tabular-nums">{ssv}</span>
+                      </div>
+                    </div>
+                    {/* Récurrence des jours dans un bloc à part */}
+                    <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3">
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-[#3a3851]">{tc.tag}</span>
+                        <div className="flex gap-1">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
+                      </div>
                     </div>
                   </Card>
                 ) : (
@@ -1085,7 +1129,27 @@ export function RendezVousApp() {
                     </div>
                   </Card>
                 )}
-                <Btn variant="ghost" onClick={leaveMatch}>Annuler la joust</Btn>
+                <button
+                  type="button"
+                  onClick={handleCancelClick}
+                  className={`w-full rounded-2xl py-2 text-sm font-extrabold transition-all duration-300 active:scale-[0.97] ${confirmCancel
+                    ? "animate-pulse border border-rose-500/60 bg-rose-500/20 text-rose-200 shadow-lg shadow-rose-500/20"
+                    : "border border-transparent text-[#6b6882] hover:text-[#c4c0d4]"
+                  }`}
+                >
+                  {confirmCancel ? "⚠️ Confirmer l'annulation" : "Annuler la joust"}
+                </button>
+              </div>
+            )}
+
+            {/* — joust cancelled (par un joueur) — */}
+            {match?.status === "cancelled" && (
+              <div className="anim-fade-up space-y-6 text-center">
+                <Badge tone="danger">Joust annulée</Badge>
+                <Card className="anim-fade-up-d1 p-8">
+                  <p className="text-lg font-black text-white">Cette joust a été annulée</p>
+                  <div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div>
+                </Card>
               </div>
             )}
 

@@ -418,6 +418,24 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return Response.json({ match: serializeMatch(updated) });
     }
 
+    /* ── Cancel the joust (2-click confirmation) ──
+       Déclenche une notification push à l'adversaire pour l'informer. */
+    if (body.action === "cancel") {
+      const denied = await requireActor();
+      if (denied) return denied;
+      const [updated] = await db
+        .update(matches)
+        .set({ status: "cancelled", inviteStatus: "declined", updatedAt: now })
+        .where(eq(matches.id, id))
+        .returning();
+      const target = playerName === match.creatorName ? match.guestName : match.creatorName;
+      if (target) {
+        notifyPlayer(id, target, "❌ Joust annulée", `${playerName} a annulé la joust.`);
+      }
+      broadcastMatchChange(id, { action: "cancel" });
+      return Response.json({ match: serializeMatch(updated) });
+    }
+
     /* ── Re-arm the recurring alarm ── */
     if (body.action === "reschedule") {
       const denied = await requireActor();
