@@ -463,7 +463,34 @@ export function RendezVousApp() {
   }
 
   /* ── boot ── */
-  useEffect(() => { if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined); }, []);
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    let reloading = false;
+    const onControllerChange = () => {
+      /* Un nouveau service worker a pris le contrôle → on recharge la page
+         pour servir le code et les styles les plus récents (ex: safe areas iOS). */
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+    /* PWA : on demande au navigateur de NE PAS utiliser le cache HTTP pour le
+       SW (les en-têtes no-cache de next.config.ts le garantissent côté serveur).
+       On force aussi update() à chaque chargement pour que l'app installée
+       récupère les nouveaux styles dès qu'elle est ouverte. */
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => undefined);
+    const t = window.setTimeout(() => {
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        if (reg) {
+          reg.update().catch(() => undefined);
+        }
+      });
+    }, 2000);
+    return () => {
+      window.clearTimeout(t);
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+    };
+  }, []);
   useEffect(() => {
     (async () => {
       try {
