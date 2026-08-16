@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, BellRing, Check, ChevronDown, ChevronRight, ChevronUp, Copy, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Filter, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { listenToMatch } from "@/lib/realtime-client";
@@ -52,7 +52,7 @@ type Match = {
 };
 type Move = { id: string; fromSquare: string; toSquare: string; san: string; ply: number };
 type AuthUser = { id: string; pseudo: string; email: string } | null;
-type Screen = "auth" | "home" | "create" | "join" | "match";
+type Screen = "auth" | "home" | "create" | "join" | "match" | "profile";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const MATCH_KEY = "joust-match-id";
@@ -260,6 +260,10 @@ export function RendezVousApp() {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   /* Card validée dépliée dans la liste (au lieu d'un écran séparé) */
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /* Filtres : bouton on/off « validés » + entonnoir multi-états */
+  const [onlyValidated, setOnlyValidated] = useState(false);
+  const [funnelOpen, setFunnelOpen] = useState(false);
+  const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -808,6 +812,12 @@ export function RendezVousApp() {
     localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
   }
 
+  /* Ouvre le profil : les filtres (validés + entonnoir) y sont accessibles. */
+  function goProfile() {
+    if (screen === "profile") { setScreen("home"); return; }
+    setScreen("profile");
+  }
+
   function leaveMatch() {
     void cancelScheduledNotif();
     /* Quitter une joust active l'annule côté serveur (statut « cancelled »),
@@ -871,8 +881,8 @@ export function RendezVousApp() {
         <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 pt-[var(--safe-top)] backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
-              {(screen === "create" || screen === "join" || screen === "match") ? (
-                <button onClick={() => (screen === "match" ? goHome() : setScreen("home"))} aria-label="Retour" className="grid h-7 w-7 place-items-center rounded-xl bg-white/[0.04] text-[#c4c0d4] ring-1 ring-white/[0.06] active:scale-90"><ArrowLeft size={15} /></button>
+              {(screen === "create" || screen === "join" || screen === "match" || screen === "profile") ? (
+                <button onClick={() => (screen === "match" ? goHome() : screen === "profile" ? goProfile() : setScreen("home"))} aria-label="Retour" className="grid h-7 w-7 place-items-center rounded-xl bg-white/[0.04] text-[#c4c0d4] ring-1 ring-white/[0.06] active:scale-90"><ArrowLeft size={15} /></button>
               ) : (
                 <div className="grid h-7 w-7 place-items-center rounded-xl bg-violet-600 shadow-md shadow-violet-600/30"><ChessPiece color="w" type="n" className="h-5 w-5 text-white" /></div>
               )}
@@ -881,7 +891,7 @@ export function RendezVousApp() {
             <div className="flex items-center gap-2">
               {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
               {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
-              {pseudo && <div className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></div>}
+{pseudo && <button type="button" onClick={goProfile} className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06] transition active:scale-95 hover:bg-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></button>}
               {authUser && <button type="button" onClick={() => void logout()} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
             </div>
           </div>
@@ -947,8 +957,28 @@ export function RendezVousApp() {
                   </div>
                   <Badge tone="accent">{myMatches.length} {myMatches.length > 1 ? "jousts" : "joust"}</Badge>
                 </div>
+
                 <div className="anim-fade-up-d1 space-y-2.5">
-                  {myMatches.map((m) => {
+                  {myMatches
+                    .filter((m) => {
+                      if (onlyValidated) {
+                        const ok = (m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed) || m.status === "playing";
+                        if (!ok) return false;
+                      }
+                      if (statusFilters.size > 0) {
+                        const iCreator2 = m.creatorName === pseudo;
+                        const pending2 = m.inviteStatus === "pending";
+                        const hasKey =
+                          (statusFilters.has("valid") && (m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed)) ||
+                          (statusFilters.has("waiting-player") && !m.guestName) ||
+                          (statusFilters.has("answer") && m.guestName && pending2 && !(iCreator2 ? m.timeControlBy === "creator" : m.timeControlBy === "guest")) ||
+                          (statusFilters.has("waiting-opp") && m.guestName && pending2 && (iCreator2 ? m.timeControlBy === "creator" : m.timeControlBy === "guest")) ||
+                          (statusFilters.has("playing") && m.status === "playing");
+                        if (!hasKey) return false;
+                      }
+                      return true;
+                    })
+                    .map((m) => {
                     const mTc = tcInfo(m.timeControl);
                     const iCreator = m.creatorName === pseudo;
                     const opp = iCreator ? m.guestName : m.creatorName;
@@ -1084,6 +1114,89 @@ export function RendezVousApp() {
                 <Btn type="submit" disabled={saving || codeInput.length < 4}>Rejoindre la joust</Btn>
               </form>
             </Card>
+          </div>
+        )}
+
+        {/* ══ 3c. PROFIL — filtres des jousts (opt-in via le pseudo) ══ */}
+        {screen === "profile" && (
+          <div className="anim-fade-up w-full space-y-6">
+            <div className="text-center">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-[24px] border border-white/[0.08] bg-violet-600/15 ring-1 ring-violet-500/25"><span className="text-lg font-black text-violet-200">{(pseudo || "?").slice(0, 2).toUpperCase()}</span></div>
+              <h1 className="mt-4 text-2xl font-black tracking-tight text-white">{pseudo}</h1>
+              <p className="mt-1 text-sm text-[#6b6882]">{authUser?.email}</p>
+            </div>
+
+            <Card className="anim-fade-up-d1 p-5">
+              <p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Filtres de la liste</p>
+              <div className="space-y-4">
+                {/* Toggle validés */}
+                <button
+                  type="button"
+                  onClick={() => setOnlyValidated((v) => !v)}
+                  aria-pressed={onlyValidated}
+                  className="flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
+                >
+                  <span className="text-left"><span className="block text-[12px] font-extrabold text-white">Validés uniquement</span><span className="mt-0.5 block text-[10px] text-[#6b6882]">Ne montre que les jousts acceptés et les parties en cours</span></span>
+                  <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${onlyValidated ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${onlyValidated ? "left-[22px]" : "left-0.5"}`} />
+                  </span>
+                </button>
+
+                {/* Entonnoir états */}
+                <div>
+                  <p className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Filtrer par état</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { key: "valid", label: "Validée" },
+                      { key: "waiting-player", label: "Attend un joueur" },
+                      { key: "answer", label: "À toi de valider" },
+                      { key: "waiting-opp", label: "En attente" },
+                      { key: "playing", label: "En cours" },
+                    ] as const).map((s) => {
+                      const on = statusFilters.has(s.key);
+                      return (
+                        <button
+                          key={s.key}
+                          type="button"
+                          onClick={() => {
+                            const next = new Set(statusFilters);
+                            if (on) next.delete(s.key); else next.add(s.key);
+                            setStatusFilters(next);
+                          }}
+                          className={`rounded-full px-3 py-1.5 text-[11px] font-bold ring-1 transition-all active:scale-95 ${on ? "bg-violet-600/20 text-violet-200 ring-violet-500/40" : "bg-white/[0.03] text-[#6b6882] ring-white/[0.06]"}`}
+                        >
+                          {s.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {onlyValidated || statusFilters.size > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => { setOnlyValidated(false); setStatusFilters(new Set()); }}
+                    className="w-full rounded-xl bg-white/[0.03] py-2 text-[11px] font-bold text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-violet-300 active:scale-[0.97]"
+                  >
+                    Réinitialiser les filtres
+                  </button>
+                ) : (
+                  <p className="rounded-xl bg-white/[0.02] px-3 py-2 text-center text-[10px] text-[#6b6882] ring-1 ring-white/[0.04]">Aucun filtre actif — la liste montre tous les jousts.</p>
+                )}
+              </div>
+            </Card>
+
+            <Card className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-extrabold text-white">Notifications</p>
+                  <p className="mt-0.5 text-[10px] text-[#6b6882]">Géré depuis un joust ouvert</p>
+                </div>
+                <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
+              </div>
+            </Card>
+
+            <Btn variant="danger" onClick={() => void logout()}>Se déconnecter</Btn>
           </div>
         )}
 
