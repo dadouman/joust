@@ -528,8 +528,8 @@ export function RendezVousApp() {
               setAuthUser(d.user);
               setPseudo(d.user.pseudo);
               if (urlCode) { setScreen("join"); return; }
-              const savedMatch = localStorage.getItem(MATCH_KEY);
-              if (savedMatch) { await load(savedMatch); setScreen("match"); return; }
+              /* Affiche toujours la liste des jousts à la connexion :
+                 le bouton « + » et les cards sont le point d'entrée. */
               void loadMyMatches();
               setScreen("home");
               return;
@@ -947,25 +947,44 @@ export function RendezVousApp() {
                     const playing = m.status === "playing";
                     const armed = m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed;
                     const arrived = iCreator ? Boolean(m.arrivalCreator) : Boolean(m.arrivalGuest);
+                    /* Timer restant — quand il est écoulé, on propose « Rentrer » */
+                    const mTimeLeft = new Date(m.scheduledAt).getTime() - now;
+                    const mUnlocked = mTimeLeft <= 0;
+                    const msLeft = Math.max(0, mTimeLeft);
+                    const ddLeft = Math.floor(msLeft / 86_400_000);
+                    const hhLeft = String(Math.floor((msLeft % 86_400_000) / 3_600_000)).padStart(2, "0");
+                    const mmLeft = String(Math.floor((msLeft % 3_600_000) / 60_000)).padStart(2, "0");
+                    const timerLabel = ddLeft > 0 ? `${ddLeft}j ${hhLeft}:${mmLeft}` : `${hhLeft}:${mmLeft}`;
                     return (
-                      <button key={m.id} onClick={() => void openMatch(m)} className="w-full rounded-[20px] border border-white/[0.06] bg-[#13151d] p-4 text-left shadow-xl shadow-black/20 transition-all duration-200 active:scale-[0.98] hover:border-violet-500/30">
-                        <div className="flex items-center gap-3.5">
-                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-black text-white">{opp ? `${m.creatorName} vs ${opp}` : `${m.creatorName} vs …`}</p>
-                            <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                              {playing && <Badge tone="ok">En cours</Badge>}
-                              {armed && <Badge tone="accent">{arrived ? "Arrivé ✓" : "Validée"}</Badge>}
-                              {waitingPlayer && <Badge tone="warn"><Dot /> Attend un joueur</Badge>}
-                              {iMustAnswer2 && <Badge tone="warn">À toi de valider</Badge>}
-                              {waitingOpp && <Badge tone="muted">En attente</Badge>}
-                              {mTc && <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold text-[#6b6882] ring-1 ring-white/[0.05]">{mTc.label}</span>}
+                      <div key={m.id} className="w-full overflow-hidden rounded-[20px] border border-white/[0.06] bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 hover:border-violet-500/30">
+                        <button onClick={() => void openMatch(m)} className="block w-full p-4 text-left">
+                          <div className="flex items-center gap-3.5">
+                            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-black text-white">{opp ? `${m.creatorName} vs ${opp}` : `${m.creatorName} vs …`}</p>
+                              <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                {playing && <Badge tone="ok">En cours</Badge>}
+                                {armed && <Badge tone="accent">{arrived ? "Arrivé ✓" : "Validée"}</Badge>}
+                                {waitingPlayer && <Badge tone="warn"><Dot /> Attend un joueur</Badge>}
+                                {iMustAnswer2 && <Badge tone="warn">À toi de valider</Badge>}
+                                {waitingOpp && <Badge tone="muted">En attente</Badge>}
+                                {mTc && <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold text-[#6b6882] ring-1 ring-white/[0.05]">{mTc.label}</span>}
+                                {!mUnlocked && <span className="rounded-full bg-violet-500/[0.1] px-2 py-0.5 font-mono text-[10px] font-bold text-violet-200 ring-1 ring-violet-500/25">{timerLabel}</span>}
+                              </div>
                             </div>
+                            <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />
                           </div>
-                          <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />
-                        </div>
-                      </button>
+                        </button>
+                        {/* L'heure est arrivée : un seul bouton pour rentrer et valider l'arrivée. */}
+                        {mUnlocked && armed && !arrived && !playing && (
+                          <div className="border-t border-white/[0.05] bg-white/[0.02] px-4 py-2.5">
+                            <button onClick={() => void openMatch(m)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-2.5 text-xs font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97]">
+                              <Zap size={14} /> Je suis arrivé(e)
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
