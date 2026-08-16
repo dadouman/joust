@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, BellRing, Check, Copy, LogOut, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Check, ChevronRight, Copy, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { listenToMatch } from "@/lib/realtime-client";
@@ -225,6 +225,7 @@ export function RendezVousApp() {
   const [authError, setAuthError] = useState("");
   const [match, setMatch] = useState<Match | null>(null);
   const [moves, setMoves] = useState<Move[]>([]);
+  const [myMatches, setMyMatches] = useState<Match[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -255,6 +256,8 @@ export function RendezVousApp() {
   /* join form */
   const [codeInput, setCodeInput] = useState("");
   const [joinError, setJoinError] = useState("");
+  /* Menu "+" : choix entre créer ou rejoindre une joust */
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -332,6 +335,24 @@ export function RendezVousApp() {
       if (r.ok) apply((await r.json()) as { match: Match; moves: Move[] });
     } catch { /* */ }
   }, [apply]);
+
+  /* Charge la liste des jousts de l'utilisateur (triée par proximité). */
+  const loadMyMatches = useCallback(async () => {
+    try {
+      const r = await fetch("/api/matches/mine", { cache: "no-store" });
+      if (r.ok) {
+        const d = (await r.json()) as { matches?: Match[] };
+        if (d.matches) setMyMatches(d.matches);
+      }
+    } catch { /* */ }
+  }, []);
+
+  /* Ouvre un joust depuis la liste des cards. */
+  const openMatch = useCallback(async (m: Match) => {
+    localStorage.setItem(MATCH_KEY, m.id);
+    await load(m.id);
+    setScreen("match");
+  }, [load]);
 
   /* Ré-enregistre l'abonnement navigateur côté serveur s'il a disparu.
      Retourne true si l'abonnement serveur est actif après la synchro. */
@@ -444,6 +465,7 @@ export function RendezVousApp() {
       if (!d.user) { setAuthError(d.error ?? "Connexion impossible."); return; }
       setAuthUser(d.user);
       setPseudo(d.user.pseudo);
+      if (!codeInput) void loadMyMatches();
       setScreen(codeInput ? "join" : "home");
     } catch { setAuthError("Connexion impossible."); } finally { setSaving(false); }
   }
@@ -508,6 +530,7 @@ export function RendezVousApp() {
               if (urlCode) { setScreen("join"); return; }
               const savedMatch = localStorage.getItem(MATCH_KEY);
               if (savedMatch) { await load(savedMatch); setScreen("match"); return; }
+              void loadMyMatches();
               setScreen("home");
               return;
             }
@@ -609,7 +632,7 @@ export function RendezVousApp() {
       const next = computeNextOccurrence(timeOfDay, days);
       const r = await fetch("/api/matches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ creatorName: pseudo, scheduledAt: next.toISOString(), timeOfDay, recurrenceDays: formatDays(days), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, timeControl }) });
       const d = (await r.json()) as { match?: Match; error?: string };
-      if (d.match) { localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] }); setScreen("match"); }
+      if (d.match) { localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] }); void loadMyMatches(); setScreen("match"); }
       else notify(d.error ?? "Création impossible");
     } catch { notify("Création impossible"); } finally { setSaving(false); }
   }
@@ -625,10 +648,10 @@ export function RendezVousApp() {
         const jr = await fetch(`/api/matches/${d.match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "join", playerName: pseudo }) });
         const jd = (await jr.json()) as { match?: Match; error?: string };
         if (!jd.match) { setJoinError(jd.error ?? "Impossible de rejoindre."); return; }
-        localStorage.setItem(MATCH_KEY, jd.match.id); apply({ match: jd.match }); setScreen("match");
+        localStorage.setItem(MATCH_KEY, jd.match.id); apply({ match: jd.match }); void loadMyMatches(); setScreen("match");
         window.history.replaceState({}, "", "/");
       } else if (d.match.creatorName === pseudo) {
-        localStorage.setItem(MATCH_KEY, d.match.id); apply({ match: d.match }); setScreen("match");
+        localStorage.setItem(MATCH_KEY, d.match.id); apply({ match: d.match }); void loadMyMatches(); setScreen("match");
       } else {
         setJoinError("Cette joust a déjà deux joueurs.");
       }
@@ -780,7 +803,7 @@ export function RendezVousApp() {
 
   function leaveMatch() {
     void cancelScheduledNotif();
-    localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home");
+    localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
   }
 
   /* Annulation en 2 clics : 1er clic → le bouton passe en rouge,
@@ -800,6 +823,7 @@ export function RendezVousApp() {
     setMatch(null);
     setMoves([]);
     setScreen("home");
+    void loadMyMatches();
   }
   function toggleDay(d: number) { setDays((c) => (c.includes(d) ? c.filter((x) => x !== d) : [...c, d])); }
 
@@ -887,23 +911,83 @@ export function RendezVousApp() {
           </div>
         )}
 
-        {/* ══ 2. HOME ══ */}
+        {/* ══ 2. HOME — liste des jousts ══ */}
         {screen === "home" && (
-          <div className="anim-fade-up w-full space-y-6">
-            <div className="text-center"><Badge tone="accent">{pseudo}</Badge><h1 className="mt-4 text-3xl font-black tracking-tight text-white">Joust</h1></div>
-            <div className="anim-fade-up-d1 space-y-3">
-              <button onClick={() => setScreen("create")} className="w-full rounded-[20px] border border-violet-500/30 bg-gradient-to-br from-violet-600/20 to-violet-800/10 p-5 text-left transition-all active:scale-[0.98] hover:border-violet-500/50">
-                <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-600/30"><Swords size={22} className="text-white" /></div>
-                  <div><p className="text-base font-black text-white">Créer une joust</p><p className="mt-0.5 text-xs text-[#a39cc4]">Heure, jours et cadence</p></div>
+          <div className="anim-fade-up w-full">
+            {myMatches.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-5 py-14 text-center">
+                <div className="grid h-16 w-16 place-items-center rounded-[24px] border border-white/[0.06] bg-[#13151d] shadow-xl shadow-black/20"><Swords size={26} className="text-[#6b6882]" /></div>
+                <div>
+                  <h1 className="text-xl font-black tracking-tight text-white">Aucun joust en cours</h1>
+                  <p className="mx-auto mt-2 max-w-xs text-sm leading-5 text-[#6b6882]">Crée un nouveau rendez-vous échecs avec un ami, ou rejoins une joust avec un code.</p>
                 </div>
-              </button>
-              <button onClick={() => setScreen("join")} className="w-full rounded-[20px] border border-violet-500/25 bg-gradient-to-br from-violet-500/10 to-violet-700/5 p-5 text-left transition-all active:scale-[0.98] hover:border-violet-500/40">
-                <div className="flex items-center gap-4">
-                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/30 ring-1 ring-violet-500/30"><UserPlus size={22} className="text-violet-200" /></div>
-                  <div><p className="text-base font-black text-white">Rejoindre un ami</p><p className="mt-0.5 text-xs text-[#a39cc4]">Entre le code reçu</p></div>
+                <div className="w-full max-w-xs space-y-2.5">
+                  <button onClick={() => setScreen("create")} className="w-full rounded-2xl bg-gradient-to-br from-violet-500 to-violet-700 py-3.5 text-sm font-extrabold text-white shadow-2xl shadow-violet-700/30 transition-all duration-200 hover:brightness-110 active:scale-[0.97]"><span className="inline-flex items-center justify-center gap-2"><Plus size={16} /> Créer une joust</span></button>
+                  <button onClick={() => setScreen("join")} className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] py-3.5 text-sm font-extrabold text-[#c4c0d4] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]">Rejoindre avec un code</button>
                 </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Prochains jousts</p>
+                    <h1 className="mt-1 text-2xl font-black tracking-tight text-white">Salut {pseudo} 👋</h1>
+                  </div>
+                  <Badge tone="accent">{myMatches.length} {myMatches.length > 1 ? "jousts" : "joust"}</Badge>
+                </div>
+                <div className="anim-fade-up-d1 space-y-2.5">
+                  {myMatches.map((m) => {
+                    const mTc = tcInfo(m.timeControl);
+                    const iCreator = m.creatorName === pseudo;
+                    const opp = iCreator ? m.guestName : m.creatorName;
+                    const pending = m.inviteStatus === "pending";
+                    const iMustAnswer2 = Boolean(m.guestName && pending && !(iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
+                    const waitingOpp = Boolean(m.guestName && pending && (iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
+                    const waitingPlayer = !m.guestName;
+                    const playing = m.status === "playing";
+                    const armed = m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed;
+                    const arrived = iCreator ? Boolean(m.arrivalCreator) : Boolean(m.arrivalGuest);
+                    return (
+                      <button key={m.id} onClick={() => void openMatch(m)} className="w-full rounded-[20px] border border-white/[0.06] bg-[#13151d] p-4 text-left shadow-xl shadow-black/20 transition-all duration-200 active:scale-[0.98] hover:border-violet-500/30">
+                        <div className="flex items-center gap-3.5">
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-black text-white">{opp ? `${m.creatorName} vs ${opp}` : `${m.creatorName} vs …`}</p>
+                            <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              {playing && <Badge tone="ok">En cours</Badge>}
+                              {armed && <Badge tone="accent">{arrived ? "Arrivé ✓" : "Validée"}</Badge>}
+                              {waitingPlayer && <Badge tone="warn"><Dot /> Attend un joueur</Badge>}
+                              {iMustAnswer2 && <Badge tone="warn">À toi de valider</Badge>}
+                              {waitingOpp && <Badge tone="muted">En attente</Badge>}
+                              {mTc && <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold text-[#6b6882] ring-1 ring-white/[0.05]">{mTc.label}</span>}
+                            </div>
+                          </div>
+                          <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="mt-6 flex flex-col items-center gap-2.5">
+              <button onClick={() => setPlusMenuOpen((v) => !v)} className="group inline-flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-500 to-violet-700 py-3 pl-3 pr-5 text-sm font-extrabold text-white shadow-2xl shadow-violet-700/40 transition-all duration-200 hover:brightness-110 hover:shadow-violet-600/50 active:scale-95">
+                <span className={`grid h-8 w-8 place-items-center rounded-full bg-white/20 transition-transform duration-200 ${plusMenuOpen ? "rotate-45" : "group-hover:rotate-90"}`}><Plus size={18} /></span>
+                Nouvelle joust
               </button>
+              {plusMenuOpen && (
+                <div className="anim-fade-up flex w-full max-w-xs flex-col gap-2 rounded-[20px] border border-white/[0.08] bg-[#13151d] p-2 shadow-2xl shadow-black/30">
+                  <button onClick={() => { setPlusMenuOpen(false); setScreen("create"); }} className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors hover:bg-violet-600/15 active:scale-[0.98]">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600 shadow-lg shadow-violet-600/25"><Swords size={18} className="text-white" /></div>
+                    <div><p className="text-sm font-extrabold text-white">Créer une joust</p><p className="text-[11px] text-[#6b6882]">Heure, jours et cadence</p></div>
+                  </button>
+                  <button onClick={() => { setPlusMenuOpen(false); setScreen("join"); }} className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left transition-colors hover:bg-violet-600/15 active:scale-[0.98]">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/25 ring-1 ring-violet-500/30"><UserPlus size={18} className="text-violet-200" /></div>
+                    <div><p className="text-sm font-extrabold text-white">Rejoindre un ami</p><p className="text-[11px] text-[#6b6882]">Entre le code reçu</p></div>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
