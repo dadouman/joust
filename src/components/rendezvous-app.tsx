@@ -284,6 +284,11 @@ export function RendezVousApp() {
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
   const timeLeft = match ? new Date(match.scheduledAt).getTime() - now : 0;
+  const ms = Math.max(0, timeLeft);
+  const dd = Math.floor(ms / 86_400_000);
+  const hh = String(Math.floor((ms % 86_400_000) / 3_600_000)).padStart(2, "0");
+  const mmv = String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, "0");
+  const ssv = String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0");
   /* La validation d'arrivée n'est débloquée qu'à l'heure prévue de la joust
      (jamais avant). Aucun timer ne se déclenche automatiquement. */
   const arrivalUnlocked = Boolean(isArmed && !matchOver && timeLeft <= 0);
@@ -977,18 +982,19 @@ export function RendezVousApp() {
             {arrivalCheckActive && (
               <div className="anim-fade-up space-y-5">
                 <div className="text-center">
-                  <Badge tone={!arrivalUnlocked ? "warn" : bothArrived ? "ok" : "accent"}><Dot on /> {arrivalUnlocked ? "Validation d'arrivée" : "Prochaine joust"}</Badge>
+                  <Badge tone={!arrivalUnlocked ? "warn" : bothArrived ? "ok" : "accent"}><Dot on /> {arrivalUnlocked ? "Validation d'arrivée" : "Ta prochaine joust"}</Badge>
                   <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
                   <p className="mt-1.5 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p>
                 </div>
 
                 {!arrivalUnlocked ? (
-                  <Card className="anim-fade-up-d1 p-6 text-center">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">La validation d'arrivée sera possible à l'heure prévue</p>
-                    <p className="mt-3 font-mono text-4xl font-black text-white">
-                      {(() => { const s = Math.max(0, Math.floor(timeLeft / 1000)); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`; })()}
-                    </p>
-                    <p className="mt-2 text-[11px] text-[#6b6882]">Aucun chronomètre ne se déclenche automatiquement — chaque joueur validera son arrivée à l'heure H, puis la partie sera lancée manuellement.</p>
+                  <Card className="anim-fade-up-d1 overflow-hidden p-0">
+                    <div className="flex justify-center gap-1.5 border-b border-white/[0.05] bg-white/[0.015] px-4 py-3">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-8 w-8 place-items-center rounded-lg text-[10px] font-black ${on ? (isNext ? "bg-violet-500 text-white ring-2 ring-violet-300/50" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
+                    <div className="bg-gradient-to-b from-violet-600/[0.06] to-transparent px-6 pb-6 pt-6 text-center">
+                      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Départ dans</p>
+                      <div className="mt-3 font-mono text-5xl font-black tracking-tight text-white sm:text-6xl">{dd > 0 && <span className="text-violet-400">{dd}j </span>}{hh}<span className="anim-pulse text-violet-400">:</span>{mmv}<span className="anim-pulse text-violet-400">:</span>{ssv}</div>
+                      <p className="mt-3 text-xs capitalize text-[#6b6882]">{new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
+                    </div>
                   </Card>
                 ) : (
                   <Card className="anim-fade-up-d1 overflow-hidden p-0">

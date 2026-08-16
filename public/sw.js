@@ -1,4 +1,4 @@
-/* Joust service worker — Notifications programmées + Web Push.
+p/* Joust service worker — Notifications programmées + Web Push.
    Installation volontairement minimale pour garantir que le SW s'installe
    sur iOS 16.4+ (aucun cache.addAll bloquant qui peut faire échouer
    l'installation du SW sur iPhone). */
