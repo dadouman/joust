@@ -775,16 +775,16 @@ export function RendezVousApp() {
   const rows = useMemo(() => { const b = chess.board(); return isWhite ? b : b.map((r) => [...r].reverse()).reverse(); }, [chess, isWhite]);
   const sqName = (r: number, c: number) => `${isWhite ? FILES[c] : FILES[7 - c]}${isWhite ? 8 - r : r + 1}`;
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-[#08090e]"><div className="anim-fade-up flex flex-col items-center gap-5"><div className="relative h-14 w-14"><div className="absolute inset-0 rounded-full bg-violet-600/30 blur-xl" /><div className="anim-spin relative grid h-14 w-14 place-items-center rounded-full bg-[#13151d] ring-1 ring-white/[0.06]"><ChessPiece color="w" type="k" className="h-8 w-8 text-[#e4d6ff]" /></div></div><p className="text-sm font-extrabold text-white">Joust</p></div></div>;
+  if (loading) return <div className="flex min-h-dvh items-center justify-center bg-[#08090e]"><div className="anim-fade-up flex flex-col items-center gap-5"><div className="relative h-14 w-14"><div className="absolute inset-0 rounded-full bg-violet-600/30 blur-xl" /><div className="anim-spin relative grid h-14 w-14 place-items-center rounded-full bg-[#13151d] ring-1 ring-white/[0.06]"><ChessPiece color="w" type="k" className="h-8 w-8 text-[#e4d6ff]" /></div></div><p className="text-sm font-extrabold text-white">Joust</p></div></div>;
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#08090e]">
+    <div className="flex min-h-dvh flex-col bg-[#08090e] pb-[var(--safe-bottom)]">
       <div className="pointer-events-none fixed inset-0 overflow-hidden"><div className="absolute -top-48 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-violet-700/[0.07] blur-[120px]" /><div className="absolute bottom-0 right-0 h-72 w-72 rounded-full bg-violet-700/[0.05] blur-[100px]" /></div>
-      {toast && <div className="anim-fade-up fixed left-1/2 top-20 z-[60] w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2"><div className="rounded-2xl border border-violet-500/25 bg-[#1a1626] px-4 py-3 text-center text-xs font-bold text-violet-200 shadow-2xl shadow-black/40">{toast}</div></div>}
+      {toast && <div className="anim-fade-up fixed left-1/2 top-[calc(var(--safe-top)+5rem)] z-[60] w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2"><div className="rounded-2xl border border-violet-500/25 bg-[#1a1626] px-4 py-3 text-center text-xs font-bold text-violet-200 shadow-2xl shadow-black/40">{toast}</div></div>}
 
       {/* Header */}
       {screen !== "auth" && (
-        <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 backdrop-blur-xl">
+        <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 pt-[var(--safe-top)] backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
               {(screen === "create" || screen === "join") ? (
@@ -1116,7 +1116,7 @@ export function RendezVousApp() {
         )}
       </main>
 
-      <footer className="relative z-10 border-t border-white/[0.04] bg-[#08090e]/80 py-4 text-center backdrop-blur-xl"><p className="text-[10px] font-bold text-[#3a3851]">Joust</p></footer>
+      <footer className="relative z-10 border-t border-white/[0.04] bg-[#08090e]/80 pb-[calc(var(--safe-bottom)+1rem)] pt-4 text-center backdrop-blur-xl"><p className="text-[10px] font-bold text-[#3a3851]">Joust</p></footer>
 
       {/* QR modal */}
       {showQr && match && (
@@ -1166,7 +1166,7 @@ export function RendezVousApp() {
       {/* Notification tutorial */}
       {tutorialOpen && match && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm sm:items-center">
-          <div className="anim-fade-up max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[28px] border border-white/[0.08] bg-[#101018] p-6 shadow-2xl sm:rounded-[28px]">
+          <div className="anim-fade-up max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[28px] border border-white/[0.08] bg-[#101018] p-6 pb-[calc(var(--safe-bottom)+1.5rem)] shadow-2xl sm:rounded-[28px]">
             <div className="flex items-start justify-between gap-4"><div><Badge tone="accent">Notifications</Badge><h2 className="mt-3 text-xl font-black tracking-tight text-white">Soyez prévenus à l'heure H</h2><p className="mt-1.5 text-xs leading-5 text-[#6b6882]">Installe joust sur ton écran d'accueil, puis autorise les notifications.</p></div><button type="button" onClick={() => setTutorialOpen(false)} aria-label="Fermer" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={15} /></button></div>
             <div className="mt-5 flex items-center gap-4 rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.05]">{[{ label: "Installée", done: standalone }, { label: "Notifications", done: pushSubscribed }].map((s) => <div key={s.label} className="flex items-center gap-2"><span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] font-black ${s.done ? "bg-emerald-500 text-[#0a0f0a]" : "bg-white/[0.05] text-[#6b6882] ring-1 ring-white/[0.08]"}`}>{s.done ? <Check size={11} /> : "·"}</span><span className={`text-[10px] font-bold ${s.done ? "text-emerald-300" : "text-[#6b6882]"}`}>{s.label}</span></div>)}</div>
             <div className="mt-5 flex items-start gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-xl text-[11px] font-black ${standalone ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-violet-600 text-white"}`}>1</span><div className="flex-1"><p className="text-sm font-extrabold text-white">Installe Joust</p><p className="mt-0.5 text-[11px] leading-4 text-[#6b6882]">{platform === "ios" ? <>Safari → <strong className="text-slate-300">Partager</strong> → <strong className="text-slate-300">Sur l'écran d'accueil</strong></> : platform === "android" ? <>Chrome → <strong className="text-slate-300">⋮</strong> → <strong className="text-slate-300">Installer l'application</strong></> : <>Chrome/Edge → icône <strong className="text-slate-300">+</strong> dans la barre d'adresse</>}</p>{!standalone && deferredPrompt.current && <div className="mt-2"><Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => void deferredPrompt.current?.prompt()}>Installer maintenant</Btn></div>}</div></div>

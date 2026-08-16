@@ -10,6 +10,10 @@
   --text: #e8e6f0;
   --muted: #6b6882;
   --radius: 20px;
+  /* iOS safe areas (encoche / home indicator en PWA standalone).
+     Retombe à 0px sur desktop / Android sans encoche. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * { box-sizing: border-box; }
