@@ -262,10 +262,13 @@ export function RendezVousApp() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /* Détrompeur 2 clics pour annuler un joust directement depuis la card dépliée */
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
-  /* Filtres : bouton on/off « validés » + entonnoir multi-états */
+  /* Filtres : bouton on/off « validés » + entonnoir multi-états.
+     `filtersVisible` (réglé dans le profil) : afficher ou non la barre
+     de filtres en haut de la liste des jousts. */
   const [onlyValidated, setOnlyValidated] = useState(false);
   const [funnelOpen, setFunnelOpen] = useState(false);
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
+  const [filtersVisible, setFiltersVisible] = useState(true);
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -985,6 +988,71 @@ export function RendezVousApp() {
                   <Badge tone="accent">{myMatches.length} {myMatches.length > 1 ? "jousts" : "joust"}</Badge>
                 </div>
 
+                {/* Barre de filtres (visibilité réglée dans le profil) */}
+                {filtersVisible && (
+                  <div className="anim-fade-up space-y-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setOnlyValidated((v) => !v)}
+                        aria-pressed={onlyValidated}
+                        className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-extrabold transition-all duration-200 ${onlyValidated
+                          ? "border-violet-500/50 bg-violet-600/15 text-violet-200"
+                          : "border-white/[0.06] bg-white/[0.03] text-[#6b6882]"
+                        }`}
+                      >
+                        <span className={`relative h-4 w-8 rounded-full transition-colors ${onlyValidated ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                          <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${onlyValidated ? "left-[18px]" : "left-0.5"}`} />
+                        </span>
+                        Validés
+                      </button>
+                      <button
+                        onClick={() => setFunnelOpen((v) => !v)}
+                        aria-pressed={funnelOpen}
+                        className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-extrabold transition-all duration-200 ${funnelOpen || statusFilters.size > 0
+                          ? "border-violet-500/50 bg-violet-600/15 text-violet-200"
+                          : "border-white/[0.06] bg-white/[0.03] text-[#6b6882]"
+                        }`}
+                      >
+                        <Filter size={12} />
+                        État
+                        {statusFilters.size > 0 && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[9px] font-black text-white">{statusFilters.size}</span>}
+                      </button>
+                      {(onlyValidated || statusFilters.size > 0) && (
+                        <button onClick={() => { setOnlyValidated(false); setStatusFilters(new Set()); }} className="ml-auto text-[10px] font-bold text-[#6b6882] hover:text-violet-300 transition-colors">Réinitialiser</button>
+                      )}
+                    </div>
+                    {funnelOpen && (
+                      <div className="anim-fade-up rounded-[20px] border border-white/[0.08] bg-[#13151d] p-3 shadow-xl shadow-black/20">
+                        <p className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Filtrer par état</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {([
+                            { key: "valid", label: "Validée" },
+                            { key: "waiting-player", label: "Attend un joueur" },
+                            { key: "answer", label: "À toi de valider" },
+                            { key: "waiting-opp", label: "En attente" },
+                            { key: "playing", label: "En cours" },
+                          ] as const).map((s) => {
+                            const on = statusFilters.has(s.key);
+                            return (
+                              <button
+                                key={s.key}
+                                onClick={() => {
+                                  const next = new Set(statusFilters);
+                                  if (on) next.delete(s.key); else next.add(s.key);
+                                  setStatusFilters(next);
+                                }}
+                                className={`rounded-full px-3 py-1.5 text-[11px] font-bold ring-1 transition-all active:scale-95 ${on ? "bg-violet-600/20 text-violet-200 ring-violet-500/40" : "bg-white/[0.03] text-[#6b6882] ring-white/[0.06]"}`}
+                              >
+                                {s.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="anim-fade-up-d1 space-y-2.5">
                   {myMatches
                     .filter((m) => {
@@ -1170,64 +1238,25 @@ export function RendezVousApp() {
               <p className="mt-1 text-sm text-[#6b6882]">{authUser?.email}</p>
             </div>
 
+            {/* Paramètres de filtre : rendre la barre de filtres visible ou non dans la liste */}
             <Card className="anim-fade-up-d1 p-5">
-              <p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Filtres de la liste</p>
-              <div className="space-y-4">
-                {/* Toggle validés */}
-                <button
-                  type="button"
-                  onClick={() => setOnlyValidated((v) => !v)}
-                  aria-pressed={onlyValidated}
-                  className="flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
-                >
-                  <span className="text-left"><span className="block text-[12px] font-extrabold text-white">Validés uniquement</span><span className="mt-0.5 block text-[10px] text-[#6b6882]">Ne montre que les jousts acceptés et les parties en cours</span></span>
-                  <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${onlyValidated ? "bg-violet-600" : "bg-white/[0.08]"}`}>
-                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${onlyValidated ? "left-[22px]" : "left-0.5"}`} />
-                  </span>
-                </button>
-
-                {/* Entonnoir états */}
-                <div>
-                  <p className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Filtrer par état</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {([
-                      { key: "valid", label: "Validée" },
-                      { key: "waiting-player", label: "Attend un joueur" },
-                      { key: "answer", label: "À toi de valider" },
-                      { key: "waiting-opp", label: "En attente" },
-                      { key: "playing", label: "En cours" },
-                    ] as const).map((s) => {
-                      const on = statusFilters.has(s.key);
-                      return (
-                        <button
-                          key={s.key}
-                          type="button"
-                          onClick={() => {
-                            const next = new Set(statusFilters);
-                            if (on) next.delete(s.key); else next.add(s.key);
-                            setStatusFilters(next);
-                          }}
-                          className={`rounded-full px-3 py-1.5 text-[11px] font-bold ring-1 transition-all active:scale-95 ${on ? "bg-violet-600/20 text-violet-200 ring-violet-500/40" : "bg-white/[0.03] text-[#6b6882] ring-white/[0.06]"}`}
-                        >
-                          {s.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {onlyValidated || statusFilters.size > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => { setOnlyValidated(false); setStatusFilters(new Set()); }}
-                    className="w-full rounded-xl bg-white/[0.03] py-2 text-[11px] font-bold text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-violet-300 active:scale-[0.97]"
-                  >
-                    Réinitialiser les filtres
-                  </button>
-                ) : (
-                  <p className="rounded-xl bg-white/[0.02] px-3 py-2 text-center text-[10px] text-[#6b6882] ring-1 ring-white/[0.04]">Aucun filtre actif — la liste montre tous les jousts.</p>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => setFiltersVisible((v) => !v)}
+                aria-pressed={filtersVisible}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-4 py-3.5 ring-1 ring-white/[0.06] active:scale-[0.98]"
+              >
+                <span className="text-left">
+                  <span className="block text-[14px] font-extrabold text-white">Paramètres de filtre</span>
+                  <span className="mt-0.5 block text-[11px] text-[#6b6882]">{filtersVisible ? "Barre de filtres visible dans la liste" : "Barre de filtres masquée dans la liste"}</span>
+                </span>
+                <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${filtersVisible ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${filtersVisible ? "left-[22px]" : "left-0.5"}`} />
+                </span>
+              </button>
+              {!filtersVisible && (
+                <p className="mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2 text-center text-[10px] text-amber-200/80 ring-1 ring-amber-500/20">La liste montre tous les jousts sans filtres.</p>
+              )}
             </Card>
 
             <Card className="p-5">
