@@ -1067,9 +1067,8 @@ export function RendezVousApp() {
                     </div>
                     {/* Récurrence des jours dans un bloc à part */}
                     <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3">
-                      <div className="flex items-center justify-center gap-2">
-                        <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-[#3a3851]">{tc.tag}</span>
-                        <div className="flex gap-1">{WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}</div>
+                      <div className="flex items-center justify-center gap-1">
+                        {WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}
                       </div>
                     </div>
                   </>
