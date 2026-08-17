@@ -35,6 +35,8 @@ export function parseSseStream(stream: ReadableStream<Uint8Array>): AsyncGenerat
         if (line.trim() === "") {
           const evt = flush();
           if (evt) yield evt;
+        } else if (line.startsWith("{")) {
+          try { yield JSON.parse(line); } catch { /* ignore */ }
         } else {
           lines.push(line);
         }
