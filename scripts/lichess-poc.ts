@@ -1,15 +1,24 @@
 import "dotenv/config";
 import { createChallenge, acceptChallenge, playMove, exportGame } from "../src/lib/lichess/service";
 import { connectBoardGameStream } from "../src/lib/lichess/stream";
+import { lichessAccount } from "../src/lib/lichess/client";
 
 const whiteToken = process.env.LICHESS_WHITE_TOKEN ?? "";
 const blackToken = process.env.LICHESS_BLACK_TOKEN ?? "";
-const whiteUser = process.env.LICHESS_WHITE_USERNAME ?? "";
-const blackUser = process.env.LICHESS_BLACK_USERNAME ?? "";
 
-if (!whiteToken || !blackToken || !whiteUser || !blackUser) {
-  console.error("Variables Lichess manquantes dans .env");
+if (!whiteToken || !blackToken) {
+  console.error("Tokens Lichess manquants dans .env (LICHESS_WHITE_TOKEN / LICHESS_BLACK_TOKEN)");
   process.exit(1);
+}
+
+let blackUser = process.env.LICHESS_BLACK_USERNAME ?? "";
+
+async function resolveBlackUsername() {
+  if (blackUser) return blackUser;
+  const acc = await lichessAccount(blackToken);
+  blackUser = acc.username;
+  console.log("  Compte noir détecte :", blackUser);
+  return blackUser;
 }
 
 type LichessChallenge = { id: string; url: string; status: string };
@@ -68,6 +77,7 @@ async function test8_verify_game(challengeId: string) {
 
 async function main() {
   console.log("=== POC Lichess — démarrage ===");
+  await resolveBlackUsername();
   const ch = await test2_acceptance();
   const gameId = ch.id;
   await test3_play_white(gameId);
