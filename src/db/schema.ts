@@ -42,6 +42,9 @@ export const matches = pgTable(
     /* true once both players validated the current time control */
     timeControlConfirmed: boolean("time_control_confirmed").notNull().default(false),
 
+    /* Rated vs casual game (hidden for now — Joust games are casual by default). */
+    rated: boolean("rated").notNull().default(false),
+
     /* ── Ready check (game-agnostic): each player clicks "Prêt" once the
        countdown expires. readyWhite / readyBlack : timestamp of the click, or null. */
     readyWhite: timestamp("ready_white", { withTimezone: true }),
