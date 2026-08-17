@@ -1093,6 +1093,7 @@ export function RendezVousApp() {
                     const ddLeft = Math.floor(msLeft / 86_400_000);
                     const hhLeft = String(Math.floor((msLeft % 86_400_000) / 3_600_000)).padStart(2, "0");
                     const mmLeft = String(Math.floor((msLeft % 3_600_000) / 60_000)).padStart(2, "0");
+                    const ssLeft = String(Math.floor((msLeft % 60_000) / 1000)).padStart(2, "0");
                     const timerLabel = ddLeft > 0 ? `${ddLeft}j ${hhLeft}:${mmLeft}` : `${hhLeft}:${mmLeft}`;
                     /* La card validée se déplie dans la liste (fusion card + détail).
                        < 1h restante → affichage automatiquement en grand. */
@@ -1166,15 +1167,25 @@ export function RendezVousApp() {
                           <div className="anim-fade-up border-t border-white/[0.05]">
                             {/* Timer hypnotique quand pas encore l'heure */}
                             {!mUnlocked && (
-                              <div className="relative px-6 py-4 text-center">
-                                <div className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
-                                <div className="relative mx-auto flex items-baseline justify-center gap-1 font-mono text-3xl font-black tracking-tight text-white sm:text-4xl">
-                                  {ddLeft > 0 && <span className="text-violet-300">{ddLeft}<span className="ml-0.5 text-base text-violet-400">j</span></span>}
-                                  <span className="tabular-nums">{hhLeft}</span>
-                                  <span className="anim-pulse text-violet-400">:</span>
-                                  <span className="tabular-nums">{mmLeft}</span>
+                              <>
+                                <div className="relative px-6 py-4 text-center">
+                                  <div className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
+                                  <div className="relative mx-auto flex items-baseline justify-center gap-1 font-mono text-3xl font-black tracking-tight text-white sm:text-4xl">
+                                    {ddLeft > 0 && <span className="text-violet-300">{ddLeft}<span className="ml-0.5 text-base text-violet-400">j</span></span>}
+                                    <span className="tabular-nums">{hhLeft}</span>
+                                    <span className="anim-pulse text-violet-400">:</span>
+                                    <span className="tabular-nums">{mmLeft}</span>
+                                    <span className="anim-pulse text-violet-400">:</span>
+                                    <span className="tabular-nums">{ssLeft}</span>
+                                  </div>
                                 </div>
-                              </div>
+                                {/* Récurrence des jours dans un bloc à part */}
+                                <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3">
+                                  <div className="flex items-center justify-center gap-1">
+                                    {WEEKDAYS.map((d) => { const on = parseDays(m.recurrenceDays).includes(d.value); const isNext = new Date(m.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}
+                                  </div>
+                                </div>
+                              </>
                             )}
                             {/* Bouton d'arrivée quand l'heure est arrivée */}
                             {mUnlocked && armed && !arrived && !playing && (
