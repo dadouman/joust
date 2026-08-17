@@ -59,6 +59,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       scheduledAt?: string;
       playerName?: string;
       token?: string;
+      rematch?: boolean;
     };
     const now = new Date();
     const playerName = body.playerName?.trim();
@@ -126,7 +127,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return Response.json({ match: serializeMatch(updated) });
     }
 
-    /* ── Counter-proposal: change any parameter, needs the other side to accept ── */
+    /* ── Counter-proposal: change any parameter, needs the other side to accept ──
+       Après une partie TERMINÉE, une contre-proposition est une PROPOSITION DE REVANCHE :
+       elle réinitialise l'état de jeu avec les nouveaux paramètres et (si rematch: true)
+       inverse les couleurs — comme l'action rematch, mais avec validation de l'adversaire
+       via la négociation (accept). */
     if (body.action === "counter") {
       const denied = await requireActor();
       if (denied) return denied;
@@ -143,6 +148,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .join(",");
       const proposer = by === "guest" ? match.guestName : match.creatorName;
       const target = by === "guest" ? match.creatorName : match.guestName;
+      const isRematch = body.rematch === true;
+      const gameFinished = match.result != null || match.status === "completed";
+      /* Une proposition à la fin d'une partie réinitialise l'état de jeu (revanche)
+         sinon on garde la négociation classique de paramètres. */
+      const resetGame = gameFinished || isRematch;
       const [updated] = await db
         .update(matches)
         .set({
@@ -154,13 +164,49 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           timeControlConfirmed: false,
           inviteStatus: "pending",
           updatedAt: now,
+          ...(resetGame
+            ? {
+                status: "scheduled",
+                lastFen: null,
+                clockWhiteSeconds: 0,
+                clockBlackSeconds: 0,
+                lastMoveAt: null,
+                readyWhite: null,
+                readyBlack: null,
+                arrivalCreator: null,
+                arrivalGuest: null,
+                arrivalNoticeSentAt: null,
+                arrivalNoticeCount: 0,
+                ultimatumSentAt: null,
+                ultimatumDeadline: null,
+                ultimatumBy: null,
+                reminder5SentAt: null,
+                drawStatus: "none",
+                drawProposedBy: null,
+                result: null,
+                winnerName: null,
+                endedAt: null,
+                whitePlayer: isRematch ? match.blackPlayer : match.whitePlayer,
+                blackPlayer: isRematch ? match.whitePlayer : match.blackPlayer,
+              }
+            : {}),
         })
         .where(eq(matches.id, id))
         .returning();
-      /* Réponse à une proposition : contre-proposition → notifier le partenaire ciblé */
-      if (target) notifyPlayer(id, target, "🔄 Contre-proposition", `${proposer} propose d’autres paramètres.`);
-      broadcastMatchChange(id, { action: "counter" });
-      return Response.json({ match: serializeMatch(updated) });
+      if (resetGame) {
+        await db.delete(matchMoves).where(eq(matchMoves.matchId, id));
+      }
+      /* Réponse à une proposition : contre-proposition / revanche → notifier le partenaire ciblé */
+      if (target) {
+        notifyPlayer(
+          id,
+          target,
+          isRematch ? "⚔️ Proposition de revanche" : "🔄 Contre-proposition",
+          isRematch ? `${proposer} te propose une revanche avec de nouveaux paramètres.` : `${proposer} propose d’autres paramètres.`,
+        );
+      }
+      broadcastMatchChange(id, { action: isRematch ? "rematch-proposal" : "counter" });
+      return Response.json({ match: serializeMatch(updated), moves: [] });
     }
 
     /* ── Guest declines ── */

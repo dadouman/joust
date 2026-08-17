@@ -264,13 +264,15 @@ export function RendezVousApp() {
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
   /* Info-bulle du bullet « jeu / cadence » dans les cards */
   const [infoTipId, setInfoTipId] = useState<string | null>(null);
+  /* Éditeur de revanche / modification depuis la fin de partie */
+  const [rematchOpen, setRematchOpen] = useState(false);
   /* Filtres : bouton on/off « validés » + entonnoir multi-états.
      `filtersVisible` (réglé dans le profil) : afficher ou non la barre
      de filtres en haut de la liste des jousts. */
   const [onlyValidated, setOnlyValidated] = useState(false);
   const [funnelOpen, setFunnelOpen] = useState(false);
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
-  const [filtersVisible, setFiltersVisible] = useState(true);
+  const [filtersVisible, setFiltersVisible] = useState(false);
 
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -300,6 +302,20 @@ export function RendezVousApp() {
   const nudgeCooldownLeft = match?.arrivalNoticeSentAt ? Math.max(0, 60 - Math.floor((now - new Date(match.arrivalNoticeSentAt).getTime()) / 1000)) : 0;
   const isOver = chess.isGameOver() || matchOver;
   const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
+  /* ── Fin de partie : résultat enrichi + prochaine occurrence ── */
+  const iWon = Boolean(match?.winnerName && match.winnerName === pseudo);
+  const iLost = Boolean(match?.winnerName && match.winnerName === opponentName);
+  const nextJoustDate = match && matchDays.length > 0 ? computeNextOccurrence(match.timeOfDay, matchDays) : null;
+  const resultTitle = iWon ? "🏆 Victoire !" : iLost ? "💔 Défaite" : "🤝 Partie nulle";
+  const resultDetail = match?.winnerName
+    ? `${match.winnerName} gagne (${match.result || "abandon"})`
+    : `Partie nulle${match?.result ? ` (${match.result})` : ""}`;
+  const resultTone = iWon
+    ? "border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-300"
+    : iLost
+      ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300"
+      : "border-amber-500/30 bg-amber-500/[0.06] text-amber-300";
+  const resultDot = iWon ? "bg-emerald-400" : iLost ? "bg-rose-400" : "bg-amber-400";
   const tc = match ? tcInfo(match.timeControl) : TIME_CONTROLS[timeControl];
   const timeLeft = match ? new Date(match.scheduledAt).getTime() - now : 0;
   const ms = Math.max(0, timeLeft);
@@ -552,7 +568,10 @@ export function RendezVousApp() {
         setScreen("auth");
       } catch { setScreen("auth"); } finally { setLoading(false); refreshNotif(); }
     })();
-  }, [load, refreshNotif]);
+    /* Exécution UNIQUE au boot : ne doit pas se relancer quand match.id change
+       (sinon retour intempestif à l'accueil pendant le partage ou le jeu). */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => { const h = (e: Event) => { e.preventDefault(); deferredPrompt.current = e as unknown as { prompt: () => Promise<void> }; }; window.addEventListener("beforeinstallprompt", h); window.addEventListener("focus", refreshNotif); return () => { window.removeEventListener("beforeinstallprompt", h); window.removeEventListener("focus", refreshNotif); }; }, [refreshNotif]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
@@ -691,6 +710,26 @@ export function RendezVousApp() {
   function openEditor() {
     if (!match) return;
     setTimeOfDay(match.timeOfDay); setDays(matchDays); setTimeControl(tcInfo(match.timeControl).id); setEditing(true);
+  }
+
+  /* Ouvre l'éditeur de revanche / modification depuis la fin de partie,
+     prérempli avec les paramètres de la partie qui vient de se terminer. */
+  function openRematchEditor() {
+    if (!match) return;
+    setTimeOfDay(match.timeOfDay); setDays(matchDays); setTimeControl(tcInfo(match.timeControl).id); setRematchOpen(true);
+  }
+
+  /* Envoie une proposition de revanche (rematch=true pour inverser les couleurs)
+     ou une simple modification (rematch=false) — l'adversaire reçoit la
+     notification et doit valider via l'action accept. */
+  function sendRematchProposal(rematch: boolean) {
+    if (!match) return;
+    const next = computeNextOccurrence(timeOfDay, days);
+    void patch(
+      { action: "counter", by: iAmCreator ? "creator" : "guest", timeControl, timeOfDay, recurrenceDays: formatDays(days), scheduledAt: next.toISOString(), rematch },
+      rematch ? "⚔️ Proposition de revanche envoyée" : "Modification envoyée",
+    );
+    setRematchOpen(false);
   }
 
   async function sendMove(from: string, to: string, promotion?: string) {
@@ -1120,23 +1159,24 @@ export function RendezVousApp() {
                               ? "En attente"
                               : "—";
                     return (
-                      <div key={m.id} className={`w-full overflow-hidden rounded-[20px] border bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 ${showDetail ? "border-violet-500/40 ring-1 ring-violet-500/20" : "border-white/[0.06] hover:border-violet-500/30"}`}>
+                      <div key={m.id} className={`w-full rounded-[20px] border bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 ${infoTipId === m.id ? "overflow-visible" : "overflow-hidden"} ${showDetail ? "border-violet-500/40 ring-1 ring-violet-500/20" : "border-white/[0.06] hover:border-violet-500/30"}`}>
                         {/* En-tête compact cliquable */}
                         <button onClick={() => { if (armed) { setExpandedId(expanded ? null : m.id); } else { void openMatch(m); } }} className="block w-full p-4 text-left">
                           <div className="flex items-center gap-3.5">
-                            {/* Icône gauche + pastille de statut */}
+                            {/* Icône gauche : avatar de l'adversaire (ou logo Joust si pas d'adversaire) + pastille de statut */}
                             <div className="relative shrink-0">
-                              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                              {opp ? (
+                                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#2a243a] font-black text-xs text-[#c4c0d4] ring-1 ring-white/[0.08]">{opp.slice(0, 2).toUpperCase()}</div>
+                              ) : (
+                                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                              )}
                               <span title={statusLabel} aria-label={statusLabel} className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#13151d] ${statusDot}`} />
                             </div>
                             <div className="min-w-0 flex-1">
                               {/* 1. Date / heure */}
                               <p className="truncate text-sm font-black capitalize text-white">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
-                              {/* 2. Adversaire : avatar + nom uniquement */}
-                              <div className="mt-1 flex min-w-0 items-center gap-2">
-                                <Avatar name={opp || m.creatorName} tone="b" />
-                                <span className="truncate text-[13px] font-extrabold text-[#c4c0d4]">{opp || "En attente d'un joueur…"}</span>
-                              </div>
+                              {/* 2. Adversaire : nom aligné à gauche */}
+                              <p className="mt-1 truncate text-left text-[13px] font-extrabold text-[#c4c0d4]">{opp || "En attente d'un joueur…"}</p>
                               {/* 3. Format & durée (bullet cliquable → info-bulle jeu/cadence) */}
                               <div className="relative mt-1.5 flex flex-wrap items-center gap-1.5">
                                 <span
@@ -1150,7 +1190,9 @@ export function RendezVousApp() {
                                 </span>
                                 {!mUnlocked && <span className="rounded-full bg-violet-500/[0.1] px-2 py-0.5 font-mono text-[10px] font-bold text-violet-200 ring-1 ring-violet-500/25">{timerLabel}</span>}
                                 {infoTipId === m.id && (
-                                  <div className="absolute left-0 top-full z-40 mt-1.5 w-52 rounded-xl border border-white/[0.08] bg-[#1a1626] p-3 text-left shadow-2xl shadow-black/40">
+                                  /* Info-bulle : s'ouvre vers le HAUT quand la card est repliée
+                                     (sinon rognée par overflow-hidden), vers le BAS quand elle est dépliée. */
+                                  <div className={`absolute z-40 w-52 rounded-xl border border-white/[0.08] bg-[#1a1626] p-3 text-left shadow-2xl shadow-black/40 ${expanded ? "left-0 top-full mt-1.5" : "right-0 bottom-full mb-1.5"}`}>
                                     <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Détails de la partie</p>
                                     <p className="mt-1.5 text-[11px] font-bold text-[#c4c0d4]">♞ Jeu : Échecs</p>
                                     {mTc && <p className="mt-0.5 text-[11px] font-bold text-[#c4c0d4]">⚡ Cadence : {mTc.label} ({mTc.tag})</p>}
@@ -1221,6 +1263,7 @@ export function RendezVousApp() {
                 </div>
               </div>
             )}
+            {myMatches.length > 0 && (
             <div className="mt-6 flex flex-col items-center gap-2.5">
               <button onClick={() => setPlusMenuOpen((v) => !v)} className="group inline-flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-500 to-violet-700 py-3 pl-3 pr-5 text-sm font-extrabold text-white shadow-2xl shadow-violet-700/40 transition-all duration-200 hover:brightness-110 hover:shadow-violet-600/50 active:scale-95">
                 <span className={`grid h-8 w-8 place-items-center rounded-full bg-white/20 transition-transform duration-200 ${plusMenuOpen ? "rotate-45" : "group-hover:rotate-90"}`}><Plus size={18} /></span>
@@ -1239,6 +1282,7 @@ export function RendezVousApp() {
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
 
@@ -1297,9 +1341,6 @@ export function RendezVousApp() {
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${filtersVisible ? "left-[22px]" : "left-0.5"}`} />
                 </span>
               </button>
-              {!filtersVisible && (
-                <p className="mt-2 rounded-xl bg-amber-500/[0.06] px-3 py-2 text-center text-[10px] text-amber-200/80 ring-1 ring-amber-500/20">La liste montre tous les jousts sans filtres.</p>
-              )}
             </Card>
 
             <Card className="p-5">
@@ -1553,7 +1594,6 @@ export function RendezVousApp() {
                 )}
                 <Card className={`p-4 text-center text-sm font-bold ${isOver ? "border-amber-500/30 bg-amber-500/[0.06] text-amber-300" : timedOut ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300" : myTurn ? "border-violet-500/30 bg-violet-500/[0.06] text-violet-300" : "text-[#6b6882]"}`}>{isOver ? (chess.isCheckmate() ? `Échec et mat — ${chess.turn() === myColor ? opponentName : pseudo} gagne` : "Partie nulle") : timedOut ? `Temps écoulé pour ${timedOut === pseudo ? "toi" : timedOut}` : myTurn ? "À toi de jouer" : `Au tour de ${opponentName}`}</Card>
                 {moves.length > 0 && <Card className="p-4"><p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups</p><div className="flex flex-wrap gap-1.5">{moves.slice(-12).map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}</div></Card>}
-                {isOver && matchDays.length > 0 && <Card className="p-4 text-center"><p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain Joust</p><p className="mt-2 text-sm font-bold capitalize text-white">{computeNextOccurrence(match.timeOfDay, matchDays).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p><div className="mt-4"><Btn onClick={() => void patch({ action: "reschedule", scheduledAt: computeNextOccurrence(match.timeOfDay, matchDays).toISOString() }, "Joust reprogrammée")} disabled={saving}>Reprogrammer</Btn></div></Card>}
                 {!isOver && !timedOut && (
                   <div className="grid grid-cols-2 gap-2">
                     <Btn variant="danger" onClick={() => void patch({ action: "resign", playerName: pseudo })} disabled={saving}>Abandonner</Btn>
@@ -1562,27 +1602,65 @@ export function RendezVousApp() {
                       : <Btn variant="secondary" onClick={() => void patch({ action: "draw", playerName: pseudo }, "Proposition de nulle envoyée")} disabled={saving}>Proposer la nulle</Btn>}
                   </div>
                 )}
-                {isOver && (
-                  <Card className="p-4 text-center">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Résultat</p>
-                    <p className="mt-2 text-sm font-black text-white">
-                      {match.winnerName
-                        ? match.winnerName + " gagne (" + (match.result || "abandon") + ")"
-                        : "Partie nulle" + (match.result ? " (" + match.result + ")" : "")}
-                    </p>
-                    {matchDays.length > 0 && (
-                      <>
-                        <p className="mt-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain Joust</p>
-                        <p className="mt-2 text-sm font-bold capitalize text-white">{computeNextOccurrence(match.timeOfDay, matchDays).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
-                      </>
+                {isOver && !rematchOpen && (
+                  <div className="space-y-3">
+                    {/* Bandeau résultat : victoire / défaite / nulle */}
+                    <div className={`flex items-center justify-center gap-2.5 rounded-2xl border px-4 py-3.5 ${resultTone}`}>
+                      <span className={`h-2.5 w-2.5 rounded-full ${resultDot}`} />
+                      <p className="text-sm font-black">{resultTitle}</p>
+                      <p className="text-[11px] font-bold opacity-80">{resultDetail}</p>
+                    </div>
+                    {/* Card de fin enrichie (réutilise l'idée de la card de base) */}
+                    <Card className="overflow-hidden">
+                      <div className="flex items-center gap-3.5 p-4">
+                        <div className="relative shrink-0">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#2a243a] font-black text-xs text-[#c4c0d4] ring-1 ring-white/[0.08]">{opponentName.slice(0, 2).toUpperCase()}</div>
+                          <span className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#13151d] ${resultDot}`} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-black capitalize text-white">{nextJoustDate ? nextJoustDate.toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "Partie terminée"}</p>
+                          <p className="mt-1 truncate text-left text-[13px] font-extrabold text-[#c4c0d4]">{opponentName}</p>
+                          <p className="mt-1.5 text-[11px] font-bold text-[#6b6882]">♞ Échecs · {tc.label} ({tc.tag})</p>
+                        </div>
+                      </div>
+                    </Card>
+                    {/* Actions selon récurrence */}
+                    {matchDays.length > 0 ? (
+                      <div className="flex items-center justify-center gap-4 px-2">
+                        <button onClick={openRematchEditor} className="text-xs font-extrabold text-violet-300 transition hover:text-violet-200">Modifier</button>
+                        <button
+                          onClick={() => void handleCardCancelClick(match)}
+                          className={`text-xs font-extrabold transition ${cancelConfirmId === match.id ? "animate-pulse text-rose-300" : "text-[#6b6882] hover:text-[#c4c0d4]"}`}
+                        >
+                          {cancelConfirmId === match.id ? "Confirmer l'annulation ?" : "Annuler"}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Btn onClick={openRematchEditor} disabled={saving}><span className="inline-flex items-center gap-2"><Swords size={16} /> Prévoir la revanche</span></Btn>
+                      </div>
                     )}
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      <Btn onClick={() => void patch({ action: "rematch", scheduledAt: computeNextOccurrence(match.timeOfDay, matchDays).toISOString() }, "Revanche lancee !")} disabled={saving}>Revanche</Btn>
-                      <Btn variant="secondary" onClick={() => { localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setDays([1, 3, 5]); setTimeOfDay("20:30"); setTimeControl("blitz"); setScreen("create"); }}>Nouvelle joust</Btn>
+                    <div className="text-center">
+                      <button onClick={leaveMatch} className="text-xs font-bold text-[#6b6882] transition hover:text-[#c4c0d4]">Retour à l'accueil</button>
+                    </div>
+                  </div>
+                )}
+                {/* Éditeur de revanche / modification prérempli depuis la fin de partie */}
+                {isOver && rematchOpen && (
+                  <Card className="p-5">
+                    <p className="mb-4 text-center text-sm font-black text-white">{matchDays.length > 0 ? "Modifier le rendez-vous" : "Paramétrer la revanche"}</p>
+                    <div className="space-y-4">
+                      <Field label="Heure"><input type="time" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} className={`${inputCls} text-center font-mono text-xl font-black`} /></Field>
+                      <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Jours</span><DayPicker days={days} toggle={toggleDay} setDays={setDays} /></div>
+                      <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Cadence</span><TcPicker value={timeControl} onChange={setTimeControl} compact /></div>
+                      {matchDays.length === 0 && <p className="text-[11px] text-[#6b6882]">⚡ Les couleurs seront inversées par rapport à cette partie.</p>}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Btn variant="secondary" onClick={() => setRematchOpen(false)}>Annuler</Btn>
+                        <Btn onClick={() => sendRematchProposal(matchDays.length === 0)} disabled={saving}>Envoyer la proposition</Btn>
+                      </div>
                     </div>
                   </Card>
                 )}
-                {isOver && <Btn variant="ghost" onClick={leaveMatch}>Retour à l'accueil</Btn>}
                 {!isOver && <Btn variant="ghost" onClick={leaveMatch}>Quitter</Btn>}
               </div>
             )}
