@@ -262,6 +262,8 @@ export function RendezVousApp() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /* Détrompeur 2 clics pour annuler un joust directement depuis la card dépliée */
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+  /* Info-bulle du bullet « jeu / cadence » dans les cards */
+  const [infoTipId, setInfoTipId] = useState<string | null>(null);
   /* Filtres : bouton on/off « validés » + entonnoir multi-états.
      `filtersVisible` (réglé dans le profil) : afficher ou non la barre
      de filtres en haut de la liste des jousts. */
@@ -1097,23 +1099,63 @@ export function RendezVousApp() {
                     const withinHour = msLeft > 0 && msLeft <= 3_600_000;
                     const expanded = expandedId === m.id;
                     const showDetail = (armed || playing) && (expanded || withinHour || mUnlocked);
+                    /* Statut → pastille de couleur dans l'icône à gauche */
+                    const statusDot = playing
+                      ? "bg-emerald-400"
+                      : armed
+                        ? (arrived ? "bg-emerald-400" : "bg-violet-400")
+                        : (waitingPlayer || iMustAnswer2)
+                          ? "bg-amber-400"
+                          : "bg-[#3a3851]";
+                    const statusLabel = playing
+                      ? "En cours"
+                      : armed
+                        ? (arrived ? "Arrivé ✓" : "Validée")
+                        : waitingPlayer
+                          ? "Attend un joueur"
+                          : iMustAnswer2
+                            ? "À toi de valider"
+                            : waitingOpp
+                              ? "En attente"
+                              : "—";
                     return (
                       <div key={m.id} className={`w-full overflow-hidden rounded-[20px] border bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 ${showDetail ? "border-violet-500/40 ring-1 ring-violet-500/20" : "border-white/[0.06] hover:border-violet-500/30"}`}>
                         {/* En-tête compact cliquable */}
                         <button onClick={() => { if (armed) { setExpandedId(expanded ? null : m.id); } else { void openMatch(m); } }} className="block w-full p-4 text-left">
                           <div className="flex items-center gap-3.5">
-                            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                            {/* Icône gauche + pastille de statut */}
+                            <div className="relative shrink-0">
+                              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-600/20 font-black ring-1 ring-violet-500/25"><ChessPiece color="w" type="n" className="h-6 w-6 text-violet-200" /></div>
+                              <span title={statusLabel} aria-label={statusLabel} className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#13151d] ${statusDot}`} />
+                            </div>
                             <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-black text-white">{opp ? `${m.creatorName} vs ${opp}` : `${m.creatorName} vs …`}</p>
-                              <p className="mt-1 text-[11px] font-bold capitalize text-[#8b87a3]">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
-                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                {playing && <Badge tone="ok">En cours</Badge>}
-                                {armed && <Badge tone="accent">{arrived ? "Arrivé ✓" : "Validée"}</Badge>}
-                                {waitingPlayer && <Badge tone="warn"><Dot /> Attend un joueur</Badge>}
-                                {iMustAnswer2 && <Badge tone="warn">À toi de valider</Badge>}
-                                {waitingOpp && <Badge tone="muted">En attente</Badge>}
-                                {mTc && <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold text-[#6b6882] ring-1 ring-white/[0.05]">{mTc.label}</span>}
+                              {/* 1. Date / heure */}
+                              <p className="truncate text-sm font-black capitalize text-white">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+                              {/* 2. Adversaire : avatar + nom uniquement */}
+                              <div className="mt-1 flex min-w-0 items-center gap-2">
+                                <Avatar name={opp || m.creatorName} tone="b" />
+                                <span className="truncate text-[13px] font-extrabold text-[#c4c0d4]">{opp || "En attente d'un joueur…"}</span>
+                              </div>
+                              {/* 3. Format & durée (bullet cliquable → info-bulle jeu/cadence) */}
+                              <div className="relative mt-1.5 flex flex-wrap items-center gap-1.5">
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={(e) => { e.stopPropagation(); setInfoTipId(infoTipId === m.id ? null : m.id); }}
+                                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setInfoTipId(infoTipId === m.id ? null : m.id); } }}
+                                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ring-1 transition active:scale-95 ${infoTipId === m.id ? "bg-violet-500/20 text-violet-200 ring-violet-500/40" : "bg-white/[0.04] text-[#8b87a3] ring-white/[0.06] hover:text-violet-200"}`}
+                                >
+                                  ♞ {mTc ? `${mTc.label} (${mTc.tag})` : "Échecs"}
+                                </span>
                                 {!mUnlocked && <span className="rounded-full bg-violet-500/[0.1] px-2 py-0.5 font-mono text-[10px] font-bold text-violet-200 ring-1 ring-violet-500/25">{timerLabel}</span>}
+                                {infoTipId === m.id && (
+                                  <div className="absolute left-0 top-full z-40 mt-1.5 w-52 rounded-xl border border-white/[0.08] bg-[#1a1626] p-3 text-left shadow-2xl shadow-black/40">
+                                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Détails de la partie</p>
+                                    <p className="mt-1.5 text-[11px] font-bold text-[#c4c0d4]">♞ Jeu : Échecs</p>
+                                    {mTc && <p className="mt-0.5 text-[11px] font-bold text-[#c4c0d4]">⚡ Cadence : {mTc.label} ({mTc.tag})</p>}
+                                    <p className="mt-0.5 text-[11px] font-bold text-[#c4c0d4]">📅 {describeRecurrence(m.timeOfDay, parseDays(m.recurrenceDays))}</p>
+                                  </div>
+                                )}
                               </div>
                             </div>
                             {armed ? (expanded ? <ChevronUp size={16} className="shrink-0 text-[#3a3851]" /> : <ChevronDown size={16} className="shrink-0 text-[#3a3851]" />) : <ChevronRight size={16} className="shrink-0 text-[#3a3851]" />}
@@ -1122,16 +1164,6 @@ export function RendezVousApp() {
                         {/* Version dépliée en grand (fusion card/détail) pour les jousts validés ou en cours */}
                         {showDetail && (
                           <div className="anim-fade-up border-t border-white/[0.05]">
-                            {/* 1. Date et heure du prochain match en haut */}
-                            <div className="px-5 pt-4 text-center">
-                              <p className="text-lg font-black tracking-tight text-white">{new Date(m.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p>
-                              {/* 2. Adversaire en dessous */}
-                              <h2 className="mt-2 inline-flex items-center gap-2 rounded-2xl bg-white/[0.03] px-4 py-2 ring-1 ring-white/[0.06]">
-                                <Avatar name={opp || m.creatorName} tone="b" />
-                                <span className="text-sm font-extrabold text-white">{opp || "En attente d'un joueur…"}</span>
-                              </h2>
-                              <p className="mt-2 text-xs font-bold text-[#6b6882]">♞ Échecs · {mTc?.label} ({mTc?.tag})</p>
-                            </div>
                             {/* Timer hypnotique quand pas encore l'heure */}
                             {!mUnlocked && (
                               <div className="relative px-6 py-4 text-center">
