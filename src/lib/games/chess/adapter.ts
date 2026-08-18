@@ -4,6 +4,10 @@
    - timeout detection on tick
    - move application (chess.js rules, clock subtraction, result detection)
    - PGN persistence
+   - Lichess bridge: when the match is backed by a live Lichess game
+     (gameState.lichessGameId), moves / resigns / draw-accepts are forwarded
+     to the Lichess board API; the SSE stream (sync.ts) keeps lastFen, clocks
+     and the game result in sync.
 
    The alarm machinery (tick route) never imports chess.js directly. */
 
@@ -16,6 +20,8 @@ import { serializeMove } from "@/lib/serialize";
 import { tcInfo } from "@/lib/time-control";
 import type { GameActionResult, GameAdapter, MatchRow } from "../types";
 import { chessFromMatch, detectChessEnd, opponentOf, playerForTurn } from "./pure";
+import { startLichessGame } from "@/lib/lichess/runner";
+import { playMove as playMoveLichess, resignGame, handleDraw } from "@/lib/lichess/service";
 
 const squarePattern = /^[a-h][1-8]$/;
 const promotionPattern = /^[qrbn]$/;
@@ -36,9 +42,25 @@ export const chessAdapter: GameAdapter = {
   type: "chess",
   label: "Échecs",
 
-  onGameStart: async (match, now) => startClocks(match, now),
+  onGameStart: async (match, now) => {
+    if (process.env.LICHESS_WHITE_TOKEN && process.env.LICHESS_BLACK_TOKEN) {
+      try {
+        await startLichessGame(match);
+        return match;
+      } catch {
+        return startClocks(match, now);
+      }
+    }
+    return startClocks(match, now);
+  },
 
   onTick: async (match, now) => {
+    /* En mode Lichess, les horloges et le timeout sont gérés par Lichess
+       (le stream met à jour les horloges à chaque gameState). On n'exécute
+       donc pas la détection de timeout locale. */
+    const gs = match.gameState as Record<string, unknown> | null;
+    if (gs?.lichessGameId) return match;
+
     /* Timeout detection during chess: the player to move ran out of clock.
        Note : la partie peut démarrer via le fallback 60 s sans que readyWhite
        et readyBlack soient tous deux remplis (ex. un joueur absent n'a jamais
@@ -60,6 +82,82 @@ export const chessAdapter: GameAdapter = {
   },
 
   applyAction: async (match, action, input, playerName) => {
+    const dateNow = () => new Date();
+    const gs = match.gameState as Record<string, unknown> | null;
+    const lichessGameId = gs?.lichessGameId as string | undefined;
+
+    const tokenFor = (name: string) =>
+      name === match.whitePlayer ? process.env.LICHESS_WHITE_TOKEN : process.env.LICHESS_BLACK_TOKEN;
+
+    /* ── Abandon ── */
+    if (action === "resign") {
+      const winner = opponentOf(match, playerName);
+      if (lichessGameId) {
+        const token = tokenFor(playerName);
+        if (!token) throw new Error("Token Lichess manquant.");
+        await resignGame(token, lichessGameId);
+      }
+      const updated = await persistChessResult(match, "resign", winner);
+      return {
+        match: updated,
+        update: { status: "completed", result: "resign", winnerName: winner },
+      };
+    }
+
+    /* ── Proposition de nulle ── */
+    if (action === "draw") {
+      if (match.status !== "playing") throw new Error("La partie n'est pas en cours.");
+      const [updated] = await db
+        .update(matches)
+        .set({
+          drawStatus: "proposed",
+          drawProposedBy: playerName === match.creatorName ? "creator" : "guest",
+          updatedAt: dateNow(),
+        })
+        .where(eq(matches.id, match.id))
+        .returning();
+      return { match: updated };
+    }
+
+    /* ── Acceptation de la nulle ── */
+    if (action === "draw-accept") {
+      const byMe = playerName === match.creatorName ? "creator" : "guest";
+      if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
+        throw new Error("Aucune proposition de nulle en attente.");
+      }
+      if (lichessGameId) {
+        const token = tokenFor(playerName);
+        if (!token) throw new Error("Token Lichess manquant.");
+        try {
+          /* La proposition de nulle est gérée localement (pas d'endpoint Lichess
+             pour proposer) ; on tente quand même l'accept côté Lichess au cas où
+             une proposition y serait en attente. */
+          await handleDraw(token, lichessGameId, "accept");
+        } catch {
+          /* Aucune proposition Lichess en attente : on finalise localement. */
+        }
+      }
+      const updated = await persistChessResult(match, "agreed", null);
+      return {
+        match: updated,
+        update: { status: "completed", result: "agreed" },
+      };
+    }
+
+    /* ── Refus de la nulle ── */
+    if (action === "draw-decline") {
+      const byMe = playerName === match.creatorName ? "creator" : "guest";
+      if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
+        throw new Error("Aucune proposition de nulle en attente.");
+      }
+      const [updated] = await db
+        .update(matches)
+        .set({ drawStatus: "declined", updatedAt: dateNow() })
+        .where(eq(matches.id, match.id))
+        .returning();
+      return { match: updated };
+    }
+
     if (action !== "move") {
       throw new Error("Action échecs inconnue.");
     }
@@ -76,6 +174,73 @@ export const chessAdapter: GameAdapter = {
     const expectedPlayer = playerForTurn(match, chess.turn());
     if (playerName !== expectedPlayer) {
       throw new Error(`C’est le tour de ${expectedPlayer}.`);
+    }
+
+    /* ── Mode Lichess : coup transmis à Lichess, puis insertion locale du SAN.
+           L'arbitrage (légalité, horloges, fin de partie) est délégué à Lichess
+           via le stream (sync.ts) qui maintient lastFen, horloges et résultat.
+           On insère le SAN localement pour l'historique affiché, puis on
+           RETOURNE immédiatement sans passer par le calcul d'horloge local. ── */
+    if (lichessGameId) {
+      const token = tokenFor(playerName);
+      if (!token) throw new Error("Token Lichess manquant.");
+      await playMoveLichess(token, lichessGameId, from + to + (promotion ?? ""));
+
+      const legalMove = chess.move({ from, to, promotion: promotion ?? "q" });
+      if (!legalMove) throw new Error("Ce coup n'est pas légal.");
+
+      const previousMoves = await db
+        .select({ ply: matchMoves.ply, san: matchMoves.san })
+        .from(matchMoves)
+        .where(eq(matchMoves.matchId, match.id))
+        .orderBy(asc(matchMoves.ply));
+
+      const end = detectChessEnd(chess, match);
+      const nextStatus: "playing" | "completed" = end ? "completed" : "playing";
+
+      const [createdMove] = await db
+        .insert(matchMoves)
+        .values({
+          matchId: match.id,
+          ply: previousMoves.length + 1,
+          fromSquare: from,
+          toSquare: to,
+          promotion: legalMove.promotion || null,
+          san: legalMove.san,
+          fen: chess.fen(),
+        })
+        .returning();
+
+      if (end && nextStatus === "completed") {
+        const allMoves: MoveRow[] = [...previousMoves, { ply: previousMoves.length + 1, san: legalMove.san }];
+        const updated = await persistChessResult(match, end.result, end.winner, allMoves);
+        return {
+          match: updated,
+          update: {
+            move: serializeMove(createdMove),
+            fen: chess.fen(),
+            status: "completed",
+            result: end.result,
+            winnerName: end.winner,
+          },
+        };
+      }
+
+      const [updatedMatch] = await db
+        .update(matches)
+        .set({
+          lastFen: chess.fen(),
+          status: nextStatus,
+          lastMoveAt: dateNow(),
+          updatedAt: dateNow(),
+        })
+        .where(eq(matches.id, match.id))
+        .returning();
+
+      return {
+        match: updatedMatch,
+        update: { move: serializeMove(createdMove), fen: chess.fen(), status: nextStatus },
+      };
     }
 
     /* ── Chess clock: subtract elapsed time, then add Fischer increment ── */

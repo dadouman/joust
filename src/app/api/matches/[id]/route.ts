@@ -6,7 +6,6 @@ import { assertCanActAs } from "@/lib/auth";
 import { getGame } from "@/lib/games";
 import { broadcastMatchChange } from "@/lib/realtime";
 import { notifyPlayer } from "@/lib/push";
-import { persistResult } from "@/lib/result";
 import { serializeMatch, serializeMove } from "@/lib/serialize";
 import { isTimeControl } from "@/lib/time-control";
 
@@ -403,65 +402,56 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       return Response.json({ match: serializeMatch(withClocks ?? started) });
     }
 
-    /* ── Resign (review 3.2 §2) ── */
+    /* ── Resign (review 3.2 §2) ──
+       Délégué à l'adapter : en mode Lichess le forfait est envoyé à Lichess
+       (resignGame) avant de persister le résultat localement. */
     if (body.action === "resign") {
       const denied = await requireActor();
       if (denied) return denied;
-      const winner = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
-      const updated = await persistResult(match, "resign", winner);
-      /* Pas de notification push : la victoire/défaite est affichée à l'écran
-         via la mise à jour en temps réel (SSE / broadcast). */
-      return Response.json({ match: serializeMatch(updated) });
+      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
+      const result = await getGame(match.gameType).applyAction(match, "resign", {}, playerName);
+      broadcastMatchChange(id, {
+        status: "completed",
+        result: result.update?.result,
+        winnerName: result.update?.winnerName,
+      });
+      return Response.json({ match: serializeMatch(result.match) });
     }
 
-    /* ── Draw proposal (review 3.2 §2) ── */
+    /* ── Draw proposal (review 3.2 §2) ──
+       Délégué à l'adapter (inchangé pour le mode local ; en mode Lichess la
+       proposition reste locale — aucun endpoint Lichess dédié). */
     if (body.action === "draw") {
       const denied = await requireActor();
       if (denied) return denied;
-      if (match.status !== "playing") {
-        return Response.json({ error: "La partie n'est pas en cours." }, { status: 409 });
-      }
-      const by = playerName === match.creatorName ? "creator" : "guest";
-      const [updated] = await db
-        .update(matches)
-        .set({ drawStatus: "proposed", drawProposedBy: by, updatedAt: now })
-        .where(eq(matches.id, id))
-        .returning();
-      /* Pas de notification push pendant la partie : l'état est propagé en temps réel
-         (SSE / broadcast), l'adversaire connecté verra la proposition à l'écran. */
-      return Response.json({ match: serializeMatch(updated) });
+      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
+      const result = await getGame(match.gameType).applyAction(match, "draw", {}, playerName);
+      return Response.json({ match: serializeMatch(result.match) });
     }
 
-    /* ── Accept draw proposal ── */
+    /* ── Accept draw proposal ──
+       Délégué à l'adapter : en mode Lichess on tente l'accept via l'API board
+       avant de persister la nulle localement. */
     if (body.action === "draw-accept") {
       const denied = await requireActor();
       if (denied) return denied;
-      const byMe = playerName === match.creatorName ? "creator" : "guest";
-      if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
-        return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
-      }
-      const updated = await persistResult(match, "agreed", null);
-      /* Pas de notification push : la fin de partie (nulle) est affichée à l'écran
-         via la mise à jour en temps réel (SSE / broadcast). */
-      return Response.json({ match: serializeMatch(updated) });
+      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
+      const result = await getGame(match.gameType).applyAction(match, "draw-accept", {}, playerName);
+      broadcastMatchChange(id, {
+        status: "completed",
+        result: result.update?.result,
+      });
+      return Response.json({ match: serializeMatch(result.match) });
     }
 
-    /* ── Decline draw proposal ── */
+    /* ── Decline draw proposal ──
+       Délégué à l'adapter (inchangé pour le mode local). */
     if (body.action === "draw-decline") {
       const denied = await requireActor();
       if (denied) return denied;
-      const byMe = playerName === match.creatorName ? "creator" : "guest";
-      if (match.drawStatus !== "proposed" || match.drawProposedBy === byMe) {
-        return Response.json({ error: "Aucune proposition de nulle en attente." }, { status: 409 });
-      }
-      const [updated] = await db
-        .update(matches)
-        .set({ drawStatus: "declined", updatedAt: now })
-        .where(eq(matches.id, id))
-        .returning();
-      /* Pas de notification push pendant la partie : le proposeur connecté
-         verra le refus à l'écran via la mise à jour en temps réel. */
-      return Response.json({ match: serializeMatch(updated) });
+      if (!playerName) return Response.json({ error: "Joueur requis." }, { status: 400 });
+      const result = await getGame(match.gameType).applyAction(match, "draw-decline", {}, playerName);
+      return Response.json({ match: serializeMatch(result.match) });
     }
 
     /* ── Cancel the joust (2-click confirmation) ──

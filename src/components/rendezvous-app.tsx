@@ -282,6 +282,8 @@ export function RendezVousApp() {
   const opponentName = match ? (iAmCreator ? match.guestName : match.creatorName) : "";
   const isWhite = match ? match.whitePlayer === pseudo : true;
   const myColor = isWhite ? "w" : "b";
+  const lichessGameId = match?.gameState?.lichessGameId as string | undefined;
+  const lichessGameUrl = lichessGameId ? `https://lichess.org/${lichessGameId}` : null;
 
   const hasOpponent = Boolean(match?.guestName);
   const accepted = match?.inviteStatus === "accepted";
@@ -1594,6 +1596,11 @@ export function RendezVousApp() {
                 )}
                 <Card className={`p-4 text-center text-sm font-bold ${isOver ? "border-amber-500/30 bg-amber-500/[0.06] text-amber-300" : timedOut ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300" : myTurn ? "border-violet-500/30 bg-violet-500/[0.06] text-violet-300" : "text-[#6b6882]"}`}>{isOver ? (chess.isCheckmate() ? `Échec et mat — ${chess.turn() === myColor ? opponentName : pseudo} gagne` : "Partie nulle") : timedOut ? `Temps écoulé pour ${timedOut === pseudo ? "toi" : timedOut}` : myTurn ? "À toi de jouer" : `Au tour de ${opponentName}`}</Card>
                 {moves.length > 0 && <Card className="p-4"><p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups</p><div className="flex flex-wrap gap-1.5">{moves.slice(-12).map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}</div></Card>}
+                {lichessGameUrl && (
+                  <a href={lichessGameUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] py-2.5 text-xs font-extrabold text-[#c4c0d4] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]">
+                    ♞ Voir sur Lichess
+                  </a>
+                )}
                 {!isOver && !timedOut && (
                   <div className="grid grid-cols-2 gap-2">
                     <Btn variant="danger" onClick={() => void patch({ action: "resign", playerName: pseudo })} disabled={saving}>Abandonner</Btn>

@@ -23,13 +23,23 @@ export async function applyGameState(matchId: string, evt: GameStateEvent) {
   };
 
   if (isFinished) {
-    const result = mapLichessStatus(evt.status, evt.winner as string, match.whitePlayer, match.blackPlayer);
-    const updated = await persistChessResult(match, result.result, result.winner);
+    /* Garde anti-double-comptage : si la partie est déjà terminée (l'adapter
+       a déjà persisté le résultat après resign / draw-accept, ou le stream a
+       déjà traité un gameState de fin), on applique seulement le FEN final. */
+    if (match.status !== "completed") {
+      const result = mapLichessStatus(evt.status, evt.winner as string, match.whitePlayer, match.blackPlayer);
+      const updated = await persistChessResult(match, result.result, result.winner);
+      await db
+        .update(matches)
+        .set({ ...common, status: "completed", gameState: { ...(match.gameState ?? {}), lichessStatus: evt.status }, updatedAt: now })
+        .where(eq(matches.id, matchId));
+      return updated;
+    }
     await db
       .update(matches)
-      .set({ ...common, gameState: { ...(match.gameState ?? {}), lichessStatus: evt.status }, updatedAt: now })
+      .set({ lastFen: evt.fen, gameState: { ...(match.gameState ?? {}), lichessStatus: evt.status }, updatedAt: now })
       .where(eq(matches.id, matchId));
-    return updated;
+    return match;
   }
 
   const [updated] = await db
