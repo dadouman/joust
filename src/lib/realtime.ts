@@ -1,37 +1,14 @@
-/* Optional Supabase Realtime Broadcast — fast propagation without DB polling.
-   Neon stays the source of truth; Supabase is used only as a WebSocket pub/sub.
-   If SUPABASE_URL / SUPABASE_ANON_KEY are absent, the app falls back to SSE. */
-import { createClient } from "@supabase/supabase-js";
-
-const url = process.env.SUPABASE_URL?.trim();
-const anonKey = process.env.SUPABASE_ANON_KEY?.trim();
-
-const client = url && anonKey ? createClient(url, anonKey, {
-  auth: { persistSession: false },
-  realtime: { params: { eventsPerSecond: 20 } },
-}) : null;
-
+/* Canal temps réel unique : le SSE (route /api/matches/[id]/stream) interroge
+   la base toutes les 200 ms et détecte les changements du match — y compris
+   ceux poussés par le stream Lichess (sync.ts). Aucun pub/sub externe requis :
+   le broadcast fire-and-forget Supabase était peu fiable et ajoutait du
+   superflu réseau. Neon reste la source de vérité. */
 export function channelName(matchId: string): string {
   return `game-${matchId}`;
 }
 
-/** Fire-and-forget broadcast of a match change to all subscribed clients. */
-export function broadcastMatchChange(matchId: string, payload: Record<string, unknown> = {}) {
-  if (!client) return;
-  void (async () => {
-    try {
-      const channel = client.channel(channelName(matchId));
-      await channel.subscribe((status) => {
-        if (status !== "SUBSCRIBED") return;
-        void channel.send({
-          type: "broadcast",
-          event: "match-change",
-          payload,
-        });
-        void client.removeChannel(channel);
-      });
-    } catch {
-      /* optional — ignore */
-    }
-  })();
+/** No-op documenté — conservé pour la compatibilité des appelants (routes,
+    runner Lichess). Les changements sont propagés par le SSE qui lit la DB. */
+export function broadcastMatchChange(_matchId: string, _payload: Record<string, unknown> = {}) {
+  /* SSE uniquement : la base est interrogée toutes les 200 ms. */
 }

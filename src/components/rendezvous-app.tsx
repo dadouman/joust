@@ -4,7 +4,6 @@ import { Chess, type Square } from "chess.js";
 import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, LogOut, Minimize, Pencil, Plus, QrCode, Share2, Swords, Trash2, Trophy, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
-import { listenToMatch } from "@/lib/realtime-client";
 import { WEEKDAYS, computeNextOccurrence, describeRecurrence, formatDays, parseDays } from "@/lib/recurrence";
 import { TIME_CONTROLS, TIME_CONTROL_IDS, formatClock, tcInfo, type TimeControlId } from "@/lib/time-control";
 
@@ -354,18 +353,20 @@ export function RendezVousApp() {
     return turn === "w" ? match.whitePlayer : match.blackPlayer;
   }, [match, now, chess, chessStarted]);
 
+  /* Destinations légales de la pièce sélectionnée : met en évidence les cases
+     où il est possible de jouer (clic ou glisser-déposer). */
+  const legalTargets = useMemo(() => {
+    if (!myTurn || !selectedSquare) return new Set<string>();
+    const piece = chess.get(selectedSquare as Square);
+    if (!piece || piece.color !== myColor) return new Set<string>();
+    return new Set(chess.moves({ square: selectedSquare as Square, verbose: true }).map((m) => m.to));
+  }, [chess, myTurn, selectedSquare, myColor]);
+
   const notify = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(null), 3500); }, []);
   const apply = useCallback((p: { match: Match; moves?: Move[] }) => { setMatch(p.match); if (p.moves) setMoves(p.moves); }, []);
   const load = useCallback(async (id: string) => {
     try {
-      const ac = new AbortController();
-      const timer = window.setTimeout(() => ac.abort(), 8000);
-      try {
-        await fetch(`/api/matches/${id}/tick`, { method: "POST", signal: ac.signal });
-      } finally {
-        window.clearTimeout(timer);
-      }
-      const r = await fetch(`/api/matches/${id}`, { cache: "no-store", signal: ac.signal });
+      const r = await fetch(`/api/matches/${id}`, { cache: "no-store" });
       if (r.ok) apply((await r.json()) as { match: Match; moves: Move[] });
     } catch { /* */ }
   }, [apply]);
@@ -580,12 +581,13 @@ export function RendezVousApp() {
 
   useEffect(() => { const h = (e: Event) => { e.preventDefault(); deferredPrompt.current = e as unknown as { prompt: () => Promise<void> }; }; window.addEventListener("beforeinstallprompt", h); window.addEventListener("focus", refreshNotif); return () => { window.removeEventListener("beforeinstallprompt", h); window.removeEventListener("focus", refreshNotif); }; }, [refreshNotif]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
-  useEffect(() => { if (!match || screen !== "match") return; const t = setInterval(() => void load(match.id), 8000); return () => clearInterval(t); }, [match?.id, screen, load]);
 
+  /* Canal temps réel unique : SSE — le backend pousse les changements depuis le
+     stream Lichess (coups, horloges, fin) et met à jour la base toutes les 500 ms.
+     Plus aucun polling 8 s ni Supabase Realtime (broadcast fire-and-forget peu fiable). */
   useEffect(() => {
     if (!match || screen !== "match") return;
-    const cleanupRealtime = listenToMatch(match.id, () => void load(match.id));
-    if (typeof EventSource === "undefined") return cleanupRealtime;
+    if (typeof EventSource === "undefined") return;
     let stopped = false;
     let es: EventSource | null = null;
     let retry: number | undefined;
@@ -596,7 +598,7 @@ export function RendezVousApp() {
       es.onerror = () => { es?.close(); if (!stopped) retry = window.setTimeout(connect, 2000); };
     };
     connect();
-    return () => { stopped = true; cleanupRealtime(); if (retry) window.clearTimeout(retry); es?.close(); };
+    return () => { stopped = true; if (retry) window.clearTimeout(retry); es?.close(); };
   }, [match?.id, screen, load]);
   useEffect(() => { if (match?.status === "scheduled" && accepted && paramsConfirmed && timeLeft <= 0) void load(match.id); }, [timeLeft, match?.id, match?.status, accepted, paramsConfirmed, load]);
 
@@ -1626,7 +1628,46 @@ export function RendezVousApp() {
 
                   {/* Plateau (masqué quand la partie est repliée après la fin) */}
                   {(!isOver || !gameCardMinimized) && (
-                    <div className="aspect-square w-full"><div className="grid h-full w-full grid-cols-8 grid-rows-8">{rows.map((row, ri) => row.map((piece, ci) => { const sq = sqName(ri, ci); const dark = (ri + ci) % 2 === 1; const sel = sq === selectedSquare; const last = moves.at(-1)?.fromSquare === sq || moves.at(-1)?.toSquare === sq; const p = piece as { color: string; type: string } | null; return <button type="button" key={sq} onClick={() => tap(sq, p)} className={`relative flex items-center justify-center transition-colors select-none ${dark ? "bg-[#7b61a5]" : "bg-[#d8ccf0]"} ${sel ? "z-10 ring-[3px] ring-inset ring-white" : ""} ${last && !sel ? "after:absolute after:inset-0 after:bg-violet-300/25" : ""} ${myTurn && !timedOut ? "cursor-pointer hover:brightness-110 active:brightness-95" : "cursor-default"}`}>{ci === 0 && <span className={`absolute left-[3px] top-[1px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? 8 - ri : ri + 1}</span>}{ri === 7 && <span className={`absolute bottom-[1px] right-[3px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? FILES[ci] : FILES[7 - ci]}</span>}{p && <span className={`relative z-[5] flex h-full w-full items-center justify-center transition-transform ${sel ? "scale-105" : ""} ${p.color === "w" ? "text-[#f5eeff]" : "text-[#2a1f3d]"}`}><ChessPiece color={p.color as "w" | "b"} type={p.type as "p" | "n" | "b" | "r" | "q" | "k"} className="h-[85%] w-[85%] drop-shadow-[0_2px_2px_rgba(0,0,0,0.35)]" /></span>}</button>; }))}</div></div>
+                    <div className="aspect-square w-full">
+                      <div className="grid h-full w-full grid-cols-8 grid-rows-8">
+                        {rows.map((row, ri) => row.map((piece, ci) => {
+                          const sq = sqName(ri, ci);
+                          const dark = (ri + ci) % 2 === 1;
+                          const sel = sq === selectedSquare;
+                          const isLegal = legalTargets.has(sq);
+                          const hasPiece = piece != null;
+                          const last = moves.at(-1)?.fromSquare === sq || moves.at(-1)?.toSquare === sq;
+                          const p = piece as { color: string; type: string } | null;
+                          const canPlay = myTurn && !timedOut && !saving;
+                          return (
+                            <button
+                              type="button"
+                              key={sq}
+                              draggable={canPlay && Boolean(p?.color === myColor)}
+                              onClick={() => tap(sq, p)}
+                              onDragStart={() => { if (p) handleDragStart(sq, p as { color: string; type: string }); }}
+                              onDragOver={(e) => handleDragOver(sq, e)}
+                              onDrop={(e) => handleDrop(sq, e)}
+                              className={`relative flex items-center justify-center transition-colors select-none ${dark ? "bg-[#7b61a5]" : "bg-[#d8ccf0]"} ${sel ? "z-10 shadow-[inset_0_0_0_3px_#fff,inset_0_0_0_6px_rgba(139,92,246,0.45)]" : ""} ${isLegal && !hasPiece ? "cursor-pointer" : ""} ${last && !sel ? "after:absolute after:inset-0 after:bg-violet-300/25" : ""} ${canPlay && p?.color === myColor ? "cursor-grab active:cursor-grabbing hover:brightness-110" : isLegal ? "cursor-pointer hover:brightness-110" : canPlay ? "cursor-pointer hover:brightness-105" : "cursor-default"}`}
+                            >
+                              {ci === 0 && <span className={`absolute left-[3px] top-[1px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? 8 - ri : ri + 1}</span>}
+                              {ri === 7 && <span className={`absolute bottom-[1px] right-[3px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? FILES[ci] : FILES[7 - ci]}</span>}
+                              {p && (
+                                <span className={`relative z-[5] flex h-full w-full items-center justify-center transition-all duration-100 ${sel ? "scale-[1.18] drop-shadow-[0_4px_6px_rgba(0,0,0,0.45)]" : "hover:scale-105"} ${p.color === "w" ? "text-[#f5eeff]" : "text-[#2a1f3d]"}`}>
+                                  <ChessPiece color={p.color as "w" | "b"} type={p.type as "p" | "n" | "b" | "r" | "q" | "k"} className="h-[85%] w-[85%] drop-shadow-[0_2px_2px_rgba(0,0,0,0.35)]" />
+                                </span>
+                              )}
+                              {isLegal && !hasPiece && (
+                                <span className={`absolute z-[6] h-4 w-4 rounded-full ${dark ? "bg-[#6b4d9e]/70" : "bg-[#8b6bb8]/70"} shadow-[0_0_0_3px_rgba(255,255,255,0.35)]`} />
+                              )}
+                              {isLegal && hasPiece && sel === null && (
+                                <span className={`absolute inset-0 z-[6] rounded-full shadow-[inset_0_0_0_4px_rgba(255,255,255,0.55)] ${dark ? "bg-[#6b4d9e]/30" : "bg-[#8b6bb8]/30"}`} />
+                              )}
+                            </button>
+                          );
+                        }))}
+                      </div>
+                    </div>
                   )}
 
                   {/* Footer : toi (avatar + nom + chrono) */}

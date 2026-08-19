@@ -8,9 +8,9 @@ export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-const POLL_MS = 500;
+const POLL_MS = 200;
 
-/** SSE endpoint — quasi temps réel (< 500 ms) compatible Vercel. */
+/** SSE endpoint — quasi temps réel (< 200 ms) compatible Vercel. */
 export async function GET(_request: NextRequest, { params }: RouteContext) {
   const { id } = await params;
   const encoder = new TextEncoder();
