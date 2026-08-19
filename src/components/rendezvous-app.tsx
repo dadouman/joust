@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, LogOut, Minimize, Pencil, Plus, QrCode, Share2, Swords, Trash2, Trophy, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, History, LogOut, Minimize, Pencil, Plus, QrCode, Send, Share2, Swords, Trash2, Trophy, UserPlus, Users, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { WEEKDAYS, computeNextOccurrence, describeRecurrence, formatDays, parseDays } from "@/lib/recurrence";
@@ -51,7 +51,31 @@ type Match = {
 };
 type Move = { id: string; fromSquare: string; toSquare: string; san: string; ply: number };
 type AuthUser = { id: string; pseudo: string; email: string } | null;
-type Screen = "auth" | "home" | "create" | "join" | "match" | "profile";
+type Screen = "auth" | "home" | "create" | "join" | "match" | "profile" | "history";
+
+/* Friend item returned by /api/friends */
+type Friend = { pseudo: string; addedAt: string };
+
+/* History session (card) returned by /api/matches/history */
+type HistorySession = {
+  id: string;
+  opponent: string;
+  timeOfDay: string;
+  recurrenceDays: string;
+  timeControl: string;
+  wins: number;
+  losses: number;
+  draws: number;
+  matchCount: number;
+  matches: { match: Match; moves: { id: string; san: string; ply: number }[] }[];
+};
+type HistoryData = {
+  totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
+  totalMatches: number;
+  sessions: HistorySession[];
+};
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const MATCH_KEY = "joust-match-id";
@@ -283,6 +307,17 @@ export function RendezVousApp() {
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
   const [filtersVisible, setFiltersVisible] = useState(false);
 
+  /* Amis + historique */
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [friendInput, setFriendInput] = useState("");
+  const [friendLoading, setFriendLoading] = useState(false);
+  const [historyData, setHistoryData] = useState<HistoryData | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  /* Invitation par pseudo (écran d'attente + création) */
+  const [invitePseudoInput, setInvitePseudoInput] = useState("");
+  const [inviteError, setInviteError] = useState("");
+
   const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
   /* ── identity ── */
@@ -388,6 +423,31 @@ export function RendezVousApp() {
       }
     } catch { /* */ }
   }, []);
+
+  /* Charge la liste d'amis de l'utilisateur connecté. */
+  const loadFriends = useCallback(async () => {
+    if (!authUser) return;
+    try {
+      const r = await fetch("/api/friends", { cache: "no-store" });
+      if (r.ok) {
+        const d = (await r.json()) as { friends?: Friend[] };
+        if (d.friends) setFriends(d.friends);
+      }
+    } catch { /* */ }
+  }, [authUser]);
+
+  /* Charge l'historique des parties terminées. */
+  const loadHistory = useCallback(async () => {
+    if (!authUser) return;
+    setHistoryLoading(true);
+    try {
+      const r = await fetch("/api/matches/history", { cache: "no-store" });
+      if (r.ok) {
+        const d = (await r.json()) as HistoryData;
+        setHistoryData(d);
+      }
+    } catch { /* */ } finally { setHistoryLoading(false); }
+  }, [authUser]);
 
   /* Ouvre un joust depuis la liste des cards.
      Les jousts validées (armed) restent sur l'accueil : la card dépliée gère
@@ -515,7 +575,7 @@ export function RendezVousApp() {
       if (!d.user) { setAuthError(d.error ?? "Connexion impossible."); return; }
       setAuthUser(d.user);
       setPseudo(d.user.pseudo);
-      if (!codeInput) void loadMyMatches();
+      if (!codeInput) { void loadMyMatches(); void loadFriends(); }
       setScreen(codeInput ? "join" : "home");
     } catch { setAuthError("Connexion impossible."); } finally { setSaving(false); }
   }
@@ -590,6 +650,7 @@ export function RendezVousApp() {
               /* Affiche toujours la liste des jousts à la connexion :
                  le bouton « + » et les cards sont le point d'entrée. */
               void loadMyMatches();
+              void loadFriends();
               setScreen("home");
               return;
             }
@@ -698,6 +759,58 @@ export function RendezVousApp() {
       if (d.match) { localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] }); void loadMyMatches(); setScreen("match"); }
       else notify(d.error ?? "Création impossible");
     } catch { notify("Création impossible"); } finally { setSaving(false); }
+  }
+
+  /* Envoie une invitation à un pseudo via le code d'invitation de la joust.
+     Le destinataire recevra le code (partage) et pourra rejoindre. */
+  async function inviteByPseudo(targetPseudo: string) {
+    if (!match || !targetPseudo.trim()) { setInviteError("Pseudo requis."); return; }
+    setInviteError(""); setSaving(true);
+    try {
+      const msg =
+        `♞ ${pseudo} t'invite à une joust !\n` +
+        `⏰ ${describeRecurrence(match.timeOfDay, matchDays)}\n` +
+        `⚡ ${tc.label} (${tc.tag})\n` +
+        `Code : ${match.inviteCode}\n` +
+        `Rejoins : ${inviteLink}`;
+      /* Pas d'envoi serveur — le navigateur partage via Web Share ou copie
+         pour l'instant ; le pseudo est validé côté client. */
+      if (navigator.share) {
+        try { await navigator.share({ title: "Joust", text: msg }); return; } catch { /* cancelled */ }
+      }
+      await copy(msg, `Invitation envoyée à ${targetPseudo} !`);
+    } catch { setInviteError("Impossible d'envoyer l'invitation."); } finally { setSaving(false); }
+  }
+
+  /* Ajoute un ami par pseudo (l'utilisateur doit exister). */
+  async function addFriend(p: string) {
+    const target = p.trim();
+    if (!target) return;
+    setFriendLoading(true);
+    try {
+      const r = await fetch("/api/friends", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pseudo: target }),
+      });
+      const d = (await r.json()) as { friend?: Friend; error?: string };
+      if (d.friend) {
+        setFriends((prev) => [...prev, d.friend!]);
+        setFriendInput("");
+        notify(`${d.friend.pseudo} ajouté à tes amis !`);
+      } else {
+        notify(d.error ?? "Ajout impossible");
+      }
+    } catch { notify("Ajout impossible"); } finally { setFriendLoading(false); }
+  }
+
+  /* Retire un ami de la liste. */
+  async function removeFriend(p: string) {
+    try {
+      await fetch(`/api/friends/${encodeURIComponent(p)}`, { method: "DELETE" });
+      setFriends((prev) => prev.filter((f) => f.pseudo !== p));
+      notify(`${p} retiré de tes amis.`);
+    } catch { notify("Suppression impossible"); }
   }
 
   async function joinByCode(e: React.FormEvent) {
@@ -983,7 +1096,7 @@ export function RendezVousApp() {
         <header className="sticky top-0 z-30 border-b border-white/[0.04] bg-[#08090e]/80 pt-[var(--safe-top)] backdrop-blur-xl">
           <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-5">
             <div className="flex items-center gap-2.5">
-              {(screen === "create" || screen === "join" || screen === "match" || screen === "profile") ? (
+              {(screen === "create" || screen === "join" || screen === "match" || screen === "profile" || screen === "history") ? (
                 <button onClick={() => (screen === "match" ? goHome() : screen === "profile" ? goProfile() : setScreen("home"))} aria-label="Retour" className="grid h-7 w-7 place-items-center rounded-xl bg-white/[0.04] text-[#c4c0d4] ring-1 ring-white/[0.06] active:scale-90"><ArrowLeft size={15} /></button>
               ) : (
                 <div className="grid h-7 w-7 place-items-center rounded-xl bg-violet-600 shadow-md shadow-violet-600/30"><ChessPiece color="w" type="n" className="h-5 w-5 text-white" /></div>
@@ -1372,6 +1485,71 @@ export function RendezVousApp() {
               </button>
             </Card>
 
+            {/* Amis + historique */}
+            <Card className="anim-fade-up-d1 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-600/15 ring-1 ring-violet-500/25"><Users size={16} className="text-violet-200" /></div>
+                  <div>
+                    <p className="text-sm font-extrabold text-white">Amis</p>
+                    <p className="mt-0.5 text-[10px] text-[#6b6882]">{friends.length} ami{friends.length > 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void loadHistory().then(() => setScreen("history")); }}
+                  className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-3 py-2 text-[11px] font-extrabold text-violet-300 ring-1 ring-white/[0.06] transition active:scale-95 hover:bg-white/[0.06]"
+                >
+                  <History size={13} /> Historique
+                </button>
+              </div>
+
+              {/* Ajouter un ami */}
+              <form
+                onSubmit={(e) => { e.preventDefault(); void addFriend(friendInput); }}
+                className="mt-4 flex gap-2"
+              >
+                <input
+                  value={friendInput}
+                  onChange={(e) => setFriendInput(e.target.value)}
+                  maxLength={40}
+                  placeholder="Pseudo d'un ami…"
+                  className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-xs font-bold text-white outline-none placeholder:text-[#3a3851] focus:border-violet-500/60"
+                />
+                <Btn type="submit" disabled={friendLoading || !friendInput.trim()} variant="secondary" className="!w-auto !px-4 !py-2.5 !text-xs">
+                  <span className="inline-flex items-center gap-1.5"><UserPlus size={13} /> Ajouter</span>
+                </Btn>
+              </form>
+
+              {/* Liste des amis */}
+              {friends.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {friends.map((f) => (
+                    <div key={f.pseudo} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-3 py-2.5 ring-1 ring-white/[0.05]">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <Avatar name={f.pseudo} />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-extrabold text-white">{f.pseudo}</p>
+                          <p className="text-[9px] font-semibold text-[#6b6882]">Ami depuis le {new Date(f.addedAt).toLocaleDateString("fr-FR")}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void removeFriend(f.pseudo)}
+                        aria-label={`Retirer ${f.pseudo} de tes amis`}
+                        title={`Retirer ${f.pseudo}`}
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[0.03] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-rose-300 active:scale-90"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 rounded-xl bg-white/[0.02] px-3 py-2.5 text-center text-[10px] font-bold text-[#6b6882] ring-1 ring-white/[0.04]">Ajoute tes partenaires de joust pour les retrouver ici.</p>
+              )}
+            </Card>
+
             <Card className="p-5">
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1426,6 +1604,117 @@ export function RendezVousApp() {
           </div>
         )}
 
+        {/* ══ 3d. HISTORIQUE — parties terminées groupées en cards ══ */}
+        {screen === "history" && (
+          <div className="anim-fade-up w-full space-y-6">
+            <div className="text-center">
+              <Badge tone="accent"><History size={11} /> Historique</Badge>
+              <h1 className="mt-4 text-2xl font-black tracking-tight text-white">Tes parties</h1>
+              <p className="mt-2 text-sm text-[#6b6882]">Victoires, défaites et nulles, groupées par adversaire.</p>
+            </div>
+
+            {historyLoading && !historyData ? (
+              <div className="flex justify-center py-12"><p className="text-sm font-bold text-[#6b6882]">Chargement…</p></div>
+            ) : !historyData || historyData.totalMatches === 0 ? (
+              <Card className="anim-fade-up-d1 p-8 text-center">
+                <div className="mx-auto grid h-14 w-14 place-items-center rounded-[20px] border border-white/[0.06] bg-[#13151d]"><History size={22} className="text-[#6b6882]" /></div>
+                <p className="mt-4 text-sm font-black text-white">Aucune partie terminée</p>
+                <p className="mt-2 text-xs leading-5 text-[#6b6882]">Joue une joust avec un ami pour remplir ton historique.</p>
+              </Card>
+            ) : (
+              <>
+                {/* Bandeau récapitulatif win/loose/draw */}
+                <Card className="anim-fade-up-d1 p-5">
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div><p className="text-2xl font-black text-emerald-300">{historyData.totalWins}</p><p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Victoires</p></div>
+                    <div><p className="text-2xl font-black text-rose-300">{historyData.totalLosses}</p><p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Défaites</p></div>
+                    <div><p className="text-2xl font-black text-amber-300">{historyData.totalDraws}</p><p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Nulles</p></div>
+                    <div><p className="text-2xl font-black text-white">{historyData.totalMatches}</p><p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Parties</p></div>
+                  </div>
+                </Card>
+
+                {/* Cards par session (opposant + récurrence) */}
+                <div className="space-y-3">
+                  {historyData.sessions.map((s) => {
+                    const expanded = expandedHistoryId === s.id;
+                    const hTc = tcInfo(s.timeControl);
+                    return (
+                      <Card key={s.id} className={`overflow-hidden transition-all duration-200 ${expanded ? "border-violet-500/40 ring-1 ring-violet-500/20" : ""}`}>
+                        {/* En-tête cliquable */}
+                        <button
+                          type="button"
+                          onClick={() => setExpandedHistoryId(expanded ? null : s.id)}
+                          className="block w-full p-4 text-left"
+                        >
+                          <div className="flex items-center gap-3.5">
+                            <Avatar name={s.opponent} />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-black text-white">vs {s.opponent}</p>
+                              <p className="mt-0.5 text-[10px] font-bold text-[#6b6882]">{describeRecurrence(s.timeOfDay, parseDays(s.recurrenceDays))} · {hTc ? `${hTc.label}` : s.timeControl}</p>
+                            </div>
+                            {/* Mini scores */}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className="rounded-lg bg-emerald-500/10 px-2 py-1 font-mono text-[10px] font-black text-emerald-300 ring-1 ring-emerald-500/20">{s.wins}W</span>
+                              <span className="rounded-lg bg-rose-500/10 px-2 py-1 font-mono text-[10px] font-black text-rose-300 ring-1 ring-rose-500/20">{s.losses}L</span>
+                              <span className="rounded-lg bg-amber-500/10 px-2 py-1 font-mono text-[10px] font-black text-amber-300 ring-1 ring-amber-500/20">{s.draws}N</span>
+                              {expanded ? <ChevronUp size={15} className="text-[#3a3851]" /> : <ChevronDown size={15} className="text-[#3a3851]" />}
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Sous-cards : chaque partie de la session */}
+                        {expanded && (
+                          <div className="anim-fade-up space-y-2 border-t border-white/[0.05] p-3">
+                            <p className="px-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">{s.matchCount} partie{s.matchCount > 1 ? "s" : ""}</p>
+                            {s.matches.map(({ match: m, moves: mv }) => {
+                              const iWonM = m.winnerName === pseudo;
+                              const iLostM = Boolean(m.winnerName && m.winnerName !== pseudo);
+                              const tone = iWonM
+                                ? "border-emerald-500/25 bg-emerald-500/[0.05]"
+                                : iLostM
+                                  ? "border-rose-500/25 bg-rose-500/[0.05]"
+                                  : "border-amber-500/25 bg-amber-500/[0.04]";
+                              const dot = iWonM ? "bg-emerald-400" : iLostM ? "bg-rose-400" : "bg-amber-400";
+                              const label = iWonM ? "Victoire" : iLostM ? "Défaite" : "Nulle";
+                              return (
+                                <div key={m.id} className={`rounded-2xl border px-3.5 py-3 ${tone}`}>
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex min-w-0 items-center gap-2.5">
+                                      <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                                      <div className="min-w-0">
+                                        <p className="truncate text-xs font-extrabold text-white">
+                                          {m.winnerName
+                                            ? `${m.winnerName} gagne`
+                                            : "Partie nulle"}
+                                        </p>
+                                        <p className="mt-0.5 text-[9px] font-bold text-[#6b6882]">
+                                          {m.endedAt ? new Date(m.endedAt).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
+                                          {" · "}{tcInfo(m.timeControl).tag}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span className={`shrink-0 text-[10px] font-black ${iWonM ? "text-emerald-300" : iLostM ? "text-rose-300" : "text-amber-300"}`}>{label}</span>
+                                  </div>
+                                  {mv.length > 0 && (
+                                    <div className="mt-2.5 flex flex-wrap gap-1 border-t border-white/[0.05] pt-2">
+                                      {mv.slice(0, 14).map((x) => <span key={x.id} className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#8b87a3] ring-1 ring-white/[0.03]">{x.san}</span>)}
+                                      {mv.length > 14 && <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#6b6882]">+{mv.length - 14}</span>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ══ 4. MATCH ══ */}
         {screen === "match" && match && (
           <div className="w-full space-y-4">
@@ -1448,6 +1737,43 @@ export function RendezVousApp() {
                     <div className="grid grid-cols-2 gap-2">
                       <Btn onClick={shareInvite}><span className="inline-flex items-center gap-1.5"><Share2 size={14} /> Partager</span></Btn>
                       <Btn variant="secondary" onClick={() => copy(shareMessage, "Message copié !")}><span className="inline-flex items-center gap-1.5"><Copy size={14} /> Copier</span></Btn>
+                    </div>
+
+                    {/* Invitation directe par pseudo */}
+                    <div className="border-t border-white/[0.05] pt-3">
+                      <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Inviter par pseudo</p>
+                      <div className="flex gap-2">
+                        <input
+                          value={invitePseudoInput}
+                          onChange={(e) => { setInvitePseudoInput(e.target.value); setInviteError(""); }}
+                          maxLength={40}
+                          placeholder="Pseudo de ton ami…"
+                          className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-xs font-bold text-white outline-none placeholder:text-[#3a3851] focus:border-violet-500/60"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => { void inviteByPseudo(invitePseudoInput); setInvitePseudoInput(""); }}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600/20 px-3 py-2.5 text-[11px] font-extrabold text-violet-200 ring-1 ring-violet-500/30 transition hover:bg-violet-600/30 active:scale-95"
+                        >
+                          <Send size={12} /> Envoyer
+                        </button>
+                      </div>
+                      {inviteError && <p className="mt-2 rounded-lg bg-rose-500/[0.08] px-2 py-1.5 text-[10px] font-bold text-rose-300 ring-1 ring-rose-500/20">{inviteError}</p>}
+                      {/* Amis disponibles en un clic */}
+                      {friends.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {friends.map((f) => (
+                            <button
+                              key={f.pseudo}
+                              type="button"
+                              onClick={() => { void inviteByPseudo(f.pseudo); }}
+                              className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2.5 py-1 text-[10px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.06] transition hover:bg-violet-600/20 hover:text-violet-200 active:scale-95"
+                            >
+                              <Users size={9} /> {f.pseudo}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3 text-center"><p className="text-[11px] font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p></div>

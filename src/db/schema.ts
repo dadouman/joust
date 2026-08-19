@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const matches = pgTable(
   "matches",
@@ -192,4 +192,22 @@ export const matchMoves = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("match_moves_match_ply_idx").on(table.matchId, table.ply)],
+);
+
+/* ── Friends list ──
+   Simple directed friendship: row (userPseudo, friendPseudo) means `userPseudo`
+   has added `friendPseudo` to their friends. The pair is unique per direction. */
+export const friends = pgTable(
+  "friends",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userPseudo: varchar("user_pseudo", { length: 80 }).notNull(),
+    friendPseudo: varchar("friend_pseudo", { length: 80 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("friends_user_pseudo_idx").on(table.userPseudo),
+    index("friends_friend_pseudo_idx").on(table.friendPseudo),
+    uniqueIndex("friends_pair_uniq").on(table.userPseudo, table.friendPseudo),
+  ],
 );
