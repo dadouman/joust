@@ -695,6 +695,15 @@ type FriendRequest = {
     useEffect(() => { const h = (e: Event) => { e.preventDefault(); deferredPrompt.current = e as unknown as { prompt: () => Promise<void> }; }; window.addEventListener("beforeinstallprompt", h); window.addEventListener("focus", refreshNotif); return () => { window.removeEventListener("beforeinstallprompt", h); window.removeEventListener("focus", refreshNotif); }; }, [refreshNotif]);
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
 
+    /* Synchronisation des demandes d'amis : rafraîchit toutes les 30 s quand
+      l'utilisateur est connecté, pour que les nouvelles demandes reçues
+      apparaissent dans l'onglet « Demandes » et sur la cloche sans recharger. */
+    useEffect(() => {
+      if (!authUser) return;
+      const t = setInterval(() => { void loadFriendRequests(); }, 30_000);
+      return () => clearInterval(t);
+    }, [authUser, loadFriendRequests]);
+
     /* Canal temps réel unique : SSE — le backend pousse les changements depuis le
       stream Lichess (coups, horloges, fin) et met à jour la base toutes les 500 ms.
       Plus aucun polling 8 s ni Supabase Realtime (broadcast fire-and-forget peu fiable). */
@@ -821,11 +830,15 @@ type FriendRequest = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pseudo: target }),
       });
-      const d = (await r.json()) as { friend?: Friend; error?: string; acceptedIncoming?: boolean };
+      const d = (await r.json()) as { friend?: Friend; error?: string; acceptedIncoming?: boolean; request?: { id: string; fromPseudo: string; toPseudo: string } };
       if (d.friend) {
         setFriends((prev) => [...prev, d.friend!]);
         setFriendInput("");
-        notify(d.acceptedIncoming ? `${d.friend.pseudo} est maintenant ton ami !` : `${d.friend.pseudo} ajouté à tes amis !`);
+        notify(d.acceptedIncoming ? `${d.friend.pseudo} est maintenant ton ami ! 🎉` : `${d.friend.pseudo} ajouté à tes amis !`);
+      } else if (d.request) {
+        /* Demande envoyée avec succès — elle apparaîtra chez le destinataire. */
+        setFriendInput("");
+        notify(`Demande d'ami envoyée à ${target} ✉️`);
       } else {
         notify(d.error ?? "Demande impossible");
       }
@@ -1052,10 +1065,14 @@ type FriendRequest = {
       localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
     }
 
-    /* Ouvre le profil : les filtres (validés + entonnoir) y sont accessibles. */
+    /* Ouvre le profil : les filtres (validés + entonnoir) y sont accessibles.
+      Rafraîchit aussi les demandes d'ami pour que les nouvelles demandes
+      apparaissent sans rechargement. */
     function goProfile() {
       if (screen === "profile") { setScreen("home"); return; }
       setScreen("profile");
+      void loadFriends();
+      void loadFriendRequests();
     }
 
     function leaveMatch() {
@@ -1162,7 +1179,7 @@ type FriendRequest = {
                     aria-label={`${friendRequests.length} demande${friendRequests.length > 1 ? "s" : ""} d'ami`}
                     title={friendRequests.length > 0 ? `${friendRequests.length} demande${friendRequests.length > 1 ? "s" : ""} d'ami en attente` : "Demandes d'amis"}
                     className={`relative grid h-8 w-8 place-items-center rounded-xl ring-1 transition active:scale-90 ${friendRequests.length > 0 ? "bg-amber-500/15 text-amber-300 ring-amber-500/30" : "bg-white/[0.04] text-[#6b6882] ring-white/[0.06] hover:text-violet-300"}`}
-                    onClick={() => { setScreen("profile"); setFriendTab("demandes"); }}
+                    onClick={() => { setScreen("profile"); setFriendTab("demandes"); void loadFriendRequests(); }}
                   >
                     <Bell size={14} />
                     {friendRequests.length > 0 && (
