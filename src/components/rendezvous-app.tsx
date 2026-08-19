@@ -157,12 +157,17 @@ function openPushCtxDb(): Promise<IDBDatabase> {
   });
 }
 
+/* Clé partagée avec le service worker : `pushsubscriptionchange` lit le
+   contexte depuis IndexedDB sous cette clé pour ré-abonner automatiquement
+   quand le navigateur renouvelle l'abonnement push. */
+const PUSH_CTX_KEY = "pushCtx";
+
 async function savePushContext(ctx: { matchId: string; playerName: string; notify5min: boolean }): Promise<void> {
   try {
     const db = await openPushCtxDb();
     await new Promise<void>((resolve) => {
       const tx = db.transaction(PUSH_CTX_STORE, "readwrite");
-      tx.objectStore(PUSH_CTX_STORE).put(ctx, "context");
+      tx.objectStore(PUSH_CTX_STORE).put(ctx, PUSH_CTX_KEY);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
@@ -174,7 +179,7 @@ async function clearPushContext(): Promise<void> {
     const db = await openPushCtxDb();
     await new Promise<void>((resolve) => {
       const tx = db.transaction(PUSH_CTX_STORE, "readwrite");
-      tx.objectStore(PUSH_CTX_STORE).delete("context");
+      tx.objectStore(PUSH_CTX_STORE).delete(PUSH_CTX_KEY);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
@@ -1929,6 +1934,15 @@ export function RendezVousApp() {
                   const v = !notify5min;
                   setNotify5min(v);
                   notify5minRef.current = v;
+                  /* Mettre à jour la préférence côté serveur immédiatement,
+                     sinon le serveur continue d'envoyer les rappels 5 min
+                     même quand l'utilisateur les a désactivés. */
+                  if ("serviceWorker" in navigator) {
+                    navigator.serviceWorker.ready
+                      .then((reg) => reg.pushManager.getSubscription())
+                      .then((sub) => { if (sub) void syncServerSubscription(sub); })
+                      .catch(() => undefined);
+                  }
                   notify("⏰ Rappel 5 min " + (v ? "activé" : "désactivé") + " !");
                 }}
                 className="mt-4 flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
