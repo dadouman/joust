@@ -991,8 +991,6 @@ export function RendezVousApp() {
               <span className="text-sm font-extrabold tracking-tight text-white">Joust</span>
             </div>
             <div className="flex items-center gap-2">
-              {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
-              {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
 {pseudo && <button type="button" onClick={goProfile} className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06] transition active:scale-95 hover:bg-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></button>}
               {authUser && <button type="button" onClick={handleLogoutClick} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
             </div>
@@ -1375,16 +1373,52 @@ export function RendezVousApp() {
             </Card>
 
             <Card className="p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-extrabold text-white">Notifications</p>
-                  <p className="mt-0.5 text-[10px] text-[#6b6882]">Géré depuis un joust ouvert</p>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-extrabold text-white">Notifications</p>
+                    <p className="mt-0.5 text-[10px] text-[#6b6882]">Rappels, relances et alertes de joust</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
+                    {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
-                  {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
-                  {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
-                </div>
+
+                {/* Bouton Activer (ouvre le tuto) si pas encore abonné */}
+                {match && !pushSubscribed && (
+                  <Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => { refreshNotif(); setTutorialOpen(true); }}>
+                    <span className="inline-flex items-center gap-2"><Bell size={14} /> Activer les notifications</span>
+                  </Btn>
+                )}
+
+                {/* Toggle rappel 5 min une fois abonné */}
+                {pushSubscribed && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = !notify5min;
+                      setNotify5min(v);
+                      notify5minRef.current = v;
+                      /* Mettre à jour la préférence côté serveur immédiatement,
+                         sinon le serveur continue d'envoyer les rappels 5 min
+                         même quand l'utilisateur les a désactivés. */
+                      if ("serviceWorker" in navigator) {
+                        navigator.serviceWorker.ready
+                          .then((reg) => reg.pushManager.getSubscription())
+                          .then((sub) => { if (sub) void syncServerSubscription(sub); })
+                          .catch(() => undefined);
+                      }
+                      notify("⏰ Rappel 5 min " + (v ? "activé" : "désactivé") + " !");
+                    }}
+                    className="flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
+                  >
+                    <span className="flex items-center gap-2 text-[11px] font-bold text-[#c4c0d4]">⏰ Rappel 5 min avant le début</span>
+                    <span className={`relative h-6 w-11 rounded-full transition-colors ${notify5min ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${notify5min ? "left-[22px]" : "left-0.5"}`} />
+                    </span>
+                  </button>
+                )}
               </div>
             </Card>
 
