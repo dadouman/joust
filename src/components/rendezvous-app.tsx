@@ -1,7 +1,7 @@
   "use client";
 
   import { Chess, type Square } from "chess.js";
-  import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, History, LogOut, Minimize, Pencil, Plus, QrCode, Send, Share2, Swords, Trash2, Trophy, UserPlus, Users, X, Zap } from "lucide-react";
+  import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, History, LogOut, Minimize, Pencil, Plus, QrCode, Send, Settings, Share2, Swords, Trash2, Trophy, UserPlus, Users, X, Zap } from "lucide-react";
   import { useCallback, useEffect, useMemo, useRef, useState } from "react";
   import { ChessPiece } from "./chess-pieces";
   import { WEEKDAYS, computeNextOccurrence, describeRecurrence, formatDays, parseDays } from "@/lib/recurrence";
@@ -315,6 +315,8 @@ type FriendRequest = {
     const [funnelOpen, setFunnelOpen] = useState(false);
     const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
     const [filtersVisible, setFiltersVisible] = useState(false);
+    /* Réglages du profil (engrenage) : filtres + notifications groupés */
+    const [settingsOpen, setSettingsOpen] = useState(false);
 
   /* Amis + historique */
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -1507,29 +1509,20 @@ type FriendRequest = {
           {/* ══ 3c. PROFIL — filtres des jousts (opt-in via le pseudo) ══ */}
           {screen === "profile" && (
             <div className="anim-fade-up w-full space-y-6">
-              <div className="text-center">
+              <div className="relative text-center">
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-[24px] border border-white/[0.08] bg-violet-600/15 ring-1 ring-violet-500/25"><span className="text-lg font-black text-violet-200">{(pseudo || "?").slice(0, 2).toUpperCase()}</span></div>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  aria-label="Réglages"
+                  title="Réglages"
+                  className={`absolute right-0 top-0 grid h-10 w-10 place-items-center rounded-xl ring-1 transition active:scale-90 ${settingsOpen ? "bg-violet-600/20 text-violet-200 ring-violet-500/40" : "bg-white/[0.04] text-[#6b6882] ring-white/[0.06] hover:text-violet-300"}`}
+                >
+                  <Settings size={17} />
+                </button>
                 <h1 className="mt-4 text-2xl font-black tracking-tight text-white">{pseudo}</h1>
                 <p className="mt-1 text-sm text-[#6b6882]">{authUser?.email}</p>
               </div>
-
-              {/* Paramètres de filtre : rendre la barre de filtres visible ou non dans la liste */}
-              <Card className="anim-fade-up-d1 p-5">
-                <button
-                  type="button"
-                  onClick={() => setFiltersVisible((v) => !v)}
-                  aria-pressed={filtersVisible}
-                  className="flex w-full items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-4 py-3.5 ring-1 ring-white/[0.06] active:scale-[0.98]"
-                >
-                  <span className="text-left">
-                    <span className="block text-[14px] font-extrabold text-white">Paramètres de filtre</span>
-                    <span className="mt-0.5 block text-[11px] text-[#6b6882]">{filtersVisible ? "Barre de filtres visible dans la liste" : "Barre de filtres masquée dans la liste"}</span>
-                  </span>
-                  <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${filtersVisible ? "bg-violet-600" : "bg-white/[0.08]"}`}>
-                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${filtersVisible ? "left-[22px]" : "left-0.5"}`} />
-                  </span>
-                </button>
-              </Card>
 
               {/* Amis + historique */}
               <Card className="anim-fade-up-d1 p-5">
@@ -1635,55 +1628,99 @@ type FriendRequest = {
                 )}
               </Card>
 
-              <Card className="p-5">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-extrabold text-white">Notifications</p>
-                      <p className="mt-0.5 text-[10px] text-[#6b6882]">Rappels, relances et alertes de joust</p>
+              {/* Réglages (engrenage) : filtres + notifications groupés */}
+              {settingsOpen && (
+                <div className="anim-fade-up space-y-4">
+                  <Card className="p-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.04] ring-1 ring-white/[0.06]"><Settings size={16} className="text-[#c4c0d4]" /></div>
+                        <div>
+                          <p className="text-sm font-extrabold text-white">Réglages</p>
+                          <p className="mt-0.5 text-[10px] text-[#6b6882]">Filtres et notifications</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsOpen(false)}
+                        aria-label="Fermer les réglages"
+                        className="grid h-8 w-8 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
-                      {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
-                    </div>
-                  </div>
+                  </Card>
 
-                  {/* Bouton Activer (ouvre le tuto) si pas encore abonné */}
-                  {match && !pushSubscribed && (
-                    <Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => { refreshNotif(); setTutorialOpen(true); }}>
-                      <span className="inline-flex items-center gap-2"><Bell size={14} /> Activer les notifications</span>
-                    </Btn>
-                  )}
-
-                  {/* Toggle rappel 5 min une fois abonné */}
-                  {pushSubscribed && (
+                  {/* Paramètres de filtre */}
+                  <Card className="p-5">
                     <button
                       type="button"
-                      onClick={() => {
-                        const v = !notify5min;
-                        setNotify5min(v);
-                        notify5minRef.current = v;
-                        /* Mettre à jour la préférence côté serveur immédiatement,
-                          sinon le serveur continue d'envoyer les rappels 5 min
-                          même quand l'utilisateur les a désactivés. */
-                        if ("serviceWorker" in navigator) {
-                          navigator.serviceWorker.ready
-                            .then((reg) => reg.pushManager.getSubscription())
-                            .then((sub) => { if (sub) void syncServerSubscription(sub); })
-                            .catch(() => undefined);
-                        }
-                        notify("⏰ Rappel 5 min " + (v ? "activé" : "désactivé") + " !");
-                      }}
-                      className="flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
+                      onClick={() => setFiltersVisible((v) => !v)}
+                      aria-pressed={filtersVisible}
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-4 py-3.5 ring-1 ring-white/[0.06] active:scale-[0.98]"
                     >
-                      <span className="flex items-center gap-2 text-[11px] font-bold text-[#c4c0d4]">⏰ Rappel 5 min avant le début</span>
-                      <span className={`relative h-6 w-11 rounded-full transition-colors ${notify5min ? "bg-violet-600" : "bg-white/[0.08]"}`}>
-                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${notify5min ? "left-[22px]" : "left-0.5"}`} />
+                      <span className="text-left">
+                        <span className="flex items-center gap-2 text-[13px] font-extrabold text-white"><Filter size={14} className="text-violet-300" /> Barre de filtres</span>
+                        <span className="mt-0.5 block text-[10px] text-[#6b6882]">{filtersVisible ? "Visible dans la liste des jousts" : "Masquée dans la liste des jousts"}</span>
+                      </span>
+                      <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${filtersVisible ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${filtersVisible ? "left-[22px]" : "left-0.5"}`} />
                       </span>
                     </button>
-                  )}
+                  </Card>
+
+                  {/* Notifications */}
+                  <Card className="p-5">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-extrabold text-white">Notifications</p>
+                          <p className="mt-0.5 text-[10px] text-[#6b6882]">Rappels, relances et alertes de joust</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
+                          {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
+                        </div>
+                      </div>
+
+                      {/* Bouton Activer (ouvre le tuto) si pas encore abonné */}
+                      {match && !pushSubscribed && (
+                        <Btn variant="secondary" className="!py-2.5 text-xs" onClick={() => { refreshNotif(); setTutorialOpen(true); }}>
+                          <span className="inline-flex items-center gap-2"><Bell size={14} /> Activer les notifications</span>
+                        </Btn>
+                      )}
+
+                      {/* Toggle rappel 5 min une fois abonné */}
+                      {pushSubscribed && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const v = !notify5min;
+                            setNotify5min(v);
+                            notify5minRef.current = v;
+                            /* Mettre à jour la préférence côté serveur immédiatement,
+                              sinon le serveur continue d'envoyer les rappels 5 min
+                              même quand l'utilisateur les a désactivés. */
+                            if ("serviceWorker" in navigator) {
+                              navigator.serviceWorker.ready
+                                .then((reg) => reg.pushManager.getSubscription())
+                                .then((sub) => { if (sub) void syncServerSubscription(sub); })
+                                .catch(() => undefined);
+                            }
+                            notify("⏰ Rappel 5 min " + (v ? "activé" : "désactivé") + " !");
+                          }}
+                          className="flex w-full items-center justify-between rounded-2xl bg-white/[0.02] px-4 py-3 ring-1 ring-white/[0.06] active:scale-[0.98]"
+                        >
+                          <span className="flex items-center gap-2 text-[11px] font-bold text-[#c4c0d4]">⏰ Rappel 5 min avant le début</span>
+                          <span className={`relative h-6 w-11 rounded-full transition-colors ${notify5min ? "bg-violet-600" : "bg-white/[0.08]"}`}>
+                            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${notify5min ? "left-[22px]" : "left-0.5"}`} />
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </Card>
                 </div>
-              </Card>
+              )}
 
               <Btn variant="danger" onClick={handleLogoutClick}>Se déconnecter</Btn>
             </div>
