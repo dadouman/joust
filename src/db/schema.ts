@@ -194,9 +194,32 @@ export const matchMoves = pgTable(
   (table) => [index("match_moves_match_ply_idx").on(table.matchId, table.ply)],
 );
 
+/* ── Friend requests — mutual acceptance flow ──
+   A request from `fromPseudo` to `toPseudo`. The recipient must accept it
+   before the friendship `friends` row is created. Notifications are sent
+   to the recipient when a request arrives. */
+export const friendRequests = pgTable(
+  "friend_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fromPseudo: varchar("from_pseudo", { length: 80 }).notNull(),
+    toPseudo: varchar("to_pseudo", { length: 80 }).notNull(),
+    /* pending | accepted | declined */
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("friend_reqs_from_idx").on(table.fromPseudo),
+    index("friend_reqs_to_idx").on(table.toPseudo),
+    index("friend_reqs_status_idx").on(table.status),
+    uniqueIndex("friend_reqs_pair_uniq").on(table.fromPseudo, table.toPseudo),
+  ],
+);
+
 /* ── Friends list ──
-   Simple directed friendship: row (userPseudo, friendPseudo) means `userPseudo`
-   has added `friendPseudo` to their friends. The pair is unique per direction. */
+   A row (userPseudo, friendPseudo) means the friendship has been mutually
+   accepted. Directional (both parties get their own row after acceptance). */
 export const friends = pgTable(
   "friends",
   {
