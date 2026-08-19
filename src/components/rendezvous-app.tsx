@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { ArrowLeft, Bell, BellRing, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Filter, LogOut, Plus, QrCode, Share2, Swords, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellRing, Calendar, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUp, Copy, Filter, Frown, Handshake, LogOut, Minimize, Pencil, Plus, QrCode, Share2, Swords, Trash2, Trophy, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChessPiece } from "./chess-pieces";
 import { listenToMatch } from "@/lib/realtime-client";
@@ -266,6 +266,9 @@ export function RendezVousApp() {
   const [infoTipId, setInfoTipId] = useState<string | null>(null);
   /* Éditeur de revanche / modification depuis la fin de partie */
   const [rematchOpen, setRematchOpen] = useState(false);
+  /* Card de jeu repliée après la partie : on garde uniquement le
+     résultat + les actions, le plateau disparaît pour aérer l'écran. */
+  const [gameCardMinimized, setGameCardMinimized] = useState(false);
   /* Filtres : bouton on/off « validés » + entonnoir multi-états.
      `filtersVisible` (réglé dans le profil) : afficher ou non la barre
      de filtres en haut de la liste des jousts. */
@@ -1582,11 +1585,63 @@ export function RendezVousApp() {
             {/* — chess — */}
             {chessStarted && (
               <div className="anim-fade-up space-y-3">
-                <PlayerBar name={opponentName} color={isWhite ? "b" : "w"} active={chess.turn() !== myColor} clock={clockOf(isWhite ? "b" : "w").text} low={clockOf(isWhite ? "b" : "w").low} />
+                {/* ══ CARD ENGLOBANTE : l'adversaire en haut, le plateau au centre, toi en bas ══ */}
                 <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                  <div className="aspect-square w-full"><div className="grid h-full w-full grid-cols-8 grid-rows-8">{rows.map((row, ri) => row.map((piece, ci) => { const sq = sqName(ri, ci); const dark = (ri + ci) % 2 === 1; const sel = sq === selectedSquare; const last = moves.at(-1)?.fromSquare === sq || moves.at(-1)?.toSquare === sq; const p = piece as { color: string; type: string } | null; return <button type="button" key={sq} onClick={() => tap(sq, p)} className={`relative flex items-center justify-center transition-colors select-none ${dark ? "bg-[#7b61a5]" : "bg-[#d8ccf0]"} ${sel ? "z-10 ring-[3px] ring-inset ring-white" : ""} ${last && !sel ? "after:absolute after:inset-0 after:bg-violet-300/25" : ""} ${myTurn && !timedOut ? "cursor-pointer hover:brightness-110 active:brightness-95" : "cursor-default"}`}>{ci === 0 && <span className={`absolute left-[3px] top-[1px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? 8 - ri : ri + 1}</span>}{ri === 7 && <span className={`absolute bottom-[1px] right-[3px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? FILES[ci] : FILES[7 - ci]}</span>}{p && <span className={`relative z-[5] flex h-full w-full items-center justify-center transition-transform ${sel ? "scale-105" : ""} ${p.color === "w" ? "text-[#f5eeff]" : "text-[#2a1f3d]"}`}><ChessPiece color={p.color as "w" | "b"} type={p.type as "p" | "n" | "b" | "r" | "q" | "k"} className="h-[85%] w-[85%] drop-shadow-[0_2px_2px_rgba(0,0,0,0.35)]" /></span>}</button>; }))}</div></div>
+                  {/* Header : adversaire (avatar + nom + chrono) + bouton replier */}
+                  <div className={`flex items-center justify-between gap-3 px-4 py-2.5 transition-colors ${!isOver && chess.turn() !== myColor ? "border-violet-500/30 bg-violet-600/[0.06]" : "border-b border-white/[0.05]"}`}>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg shadow-md ring-1 ring-white/[0.06] ${isWhite ? "bg-gradient-to-br from-[#1a1328] to-[#0e0918]" : "bg-gradient-to-br from-[#3a2d55] to-[#2a1f3d]"}`}><ChessPiece color={isWhite ? "b" : "w"} type="n" className={`h-6 w-6 ${isWhite ? "text-[#6b5199]" : "text-[#e4d6ff]"}`} /></div>
+                      <div className="min-w-0">
+                        <p className={`truncate text-xs font-extrabold ${isOver ? "text-[#c4c0d4]" : "text-white"}`}>{opponentName}</p>
+                        <p className="text-[9px] font-bold text-[#6b6882]">{isWhite ? "Noirs" : "Blancs"}</p>
+                      </div>
+                      <Dot on={!isOver && chess.turn() !== myColor} />
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className={`min-w-[3.2rem] rounded-lg px-2 py-1 text-center font-mono text-sm font-black ring-1 ${clockOf(isWhite ? "b" : "w").low ? "animate-pulse bg-rose-500/15 text-rose-300 ring-rose-500/30" : !isOver && chess.turn() !== myColor ? "bg-violet-600/15 text-violet-200 ring-violet-500/30" : "bg-white/[0.04] text-[#c4c0d4] ring-white/[0.05]"}`}>{clockOf(isWhite ? "b" : "w").text}</span>
+                      {isOver && !rematchOpen && !gameCardMinimized && (
+                        <button
+                          type="button"
+                          onClick={() => setGameCardMinimized(true)}
+                          aria-label="Replier le jeu"
+                          title="Replier le jeu"
+                          className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-violet-300 active:scale-90"
+                        >
+                          <Minimize size={13} />
+                        </button>
+                      )}
+                      {isOver && gameCardMinimized && (
+                        <button
+                          type="button"
+                          onClick={() => setGameCardMinimized(false)}
+                          aria-label="Déplier le jeu"
+                          title="Déplier le jeu"
+                          className="grid h-7 w-7 place-items-center rounded-lg bg-violet-500/15 text-violet-200 ring-1 ring-violet-500/30 transition hover:bg-violet-500/25 active:scale-90"
+                        >
+                          <ChevronsUp size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Plateau (masqué quand la partie est repliée après la fin) */}
+                  {(!isOver || !gameCardMinimized) && (
+                    <div className="aspect-square w-full"><div className="grid h-full w-full grid-cols-8 grid-rows-8">{rows.map((row, ri) => row.map((piece, ci) => { const sq = sqName(ri, ci); const dark = (ri + ci) % 2 === 1; const sel = sq === selectedSquare; const last = moves.at(-1)?.fromSquare === sq || moves.at(-1)?.toSquare === sq; const p = piece as { color: string; type: string } | null; return <button type="button" key={sq} onClick={() => tap(sq, p)} className={`relative flex items-center justify-center transition-colors select-none ${dark ? "bg-[#7b61a5]" : "bg-[#d8ccf0]"} ${sel ? "z-10 ring-[3px] ring-inset ring-white" : ""} ${last && !sel ? "after:absolute after:inset-0 after:bg-violet-300/25" : ""} ${myTurn && !timedOut ? "cursor-pointer hover:brightness-110 active:brightness-95" : "cursor-default"}`}>{ci === 0 && <span className={`absolute left-[3px] top-[1px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? 8 - ri : ri + 1}</span>}{ri === 7 && <span className={`absolute bottom-[1px] right-[3px] text-[8px] font-bold ${dark ? "text-[#d8ccf0]/50" : "text-[#7b61a5]/50"}`}>{isWhite ? FILES[ci] : FILES[7 - ci]}</span>}{p && <span className={`relative z-[5] flex h-full w-full items-center justify-center transition-transform ${sel ? "scale-105" : ""} ${p.color === "w" ? "text-[#f5eeff]" : "text-[#2a1f3d]"}`}><ChessPiece color={p.color as "w" | "b"} type={p.type as "p" | "n" | "b" | "r" | "q" | "k"} className="h-[85%] w-[85%] drop-shadow-[0_2px_2px_rgba(0,0,0,0.35)]" /></span>}</button>; }))}</div></div>
+                  )}
+
+                  {/* Footer : toi (avatar + nom + chrono) */}
+                  <div className={`flex items-center justify-between gap-3 border-t border-white/[0.05] px-4 py-2.5 transition-colors ${!isOver && chess.turn() === myColor ? "bg-violet-600/[0.06]" : ""}`}>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg shadow-md ring-1 ring-white/[0.06] ${isWhite ? "bg-gradient-to-br from-[#3a2d55] to-[#2a1f3d]" : "bg-gradient-to-br from-[#1a1328] to-[#0e0918]"}`}><ChessPiece color={myColor} type="n" className={`h-6 w-6 ${isWhite ? "text-[#e4d6ff]" : "text-[#6b5199]"}`} /></div>
+                      <div className="min-w-0">
+                        <p className={`truncate text-xs font-extrabold ${isOver ? "text-[#c4c0d4]" : "text-white"}`}>{pseudo} <span className="text-[#6b6882]">(toi)</span></p>
+                        <p className="text-[9px] font-bold text-[#6b6882]">{isWhite ? "Blancs" : "Noirs"}</p>
+                      </div>
+                      <Dot on={!isOver && chess.turn() === myColor} />
+                    </div>
+                    <span className={`min-w-[3.2rem] rounded-lg px-2 py-1 text-center font-mono text-sm font-black ring-1 ${clockOf(myColor).low ? "animate-pulse bg-rose-500/15 text-rose-300 ring-rose-500/30" : !isOver && chess.turn() === myColor ? "bg-violet-600/15 text-violet-200 ring-violet-500/30" : "bg-white/[0.04] text-[#c4c0d4] ring-white/[0.05]"}`}>{clockOf(myColor).text}</span>
+                  </div>
                 </Card>
-                <PlayerBar name={`${pseudo} (toi)`} color={myColor} active={chess.turn() === myColor} clock={clockOf(myColor).text} low={clockOf(myColor).low} />
                 {selectedSquare && myTurn && (
                   <div className="flex items-center justify-center gap-3 mt-2">
                     <span className="text-xs font-mono text-violet-300">{selectedSquare}</span>
@@ -1594,7 +1649,9 @@ export function RendezVousApp() {
                     <Btn variant="ghost" onClick={() => setSelectedSquare(null)} className="!py-2 text-xs">Annuler</Btn>
                   </div>
                 )}
-                <Card className={`p-4 text-center text-sm font-bold ${isOver ? "border-amber-500/30 bg-amber-500/[0.06] text-amber-300" : timedOut ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300" : myTurn ? "border-violet-500/30 bg-violet-500/[0.06] text-violet-300" : "text-[#6b6882]"}`}>{isOver ? (chess.isCheckmate() ? `Échec et mat — ${chess.turn() === myColor ? opponentName : pseudo} gagne` : "Partie nulle") : timedOut ? `Temps écoulé pour ${timedOut === pseudo ? "toi" : timedOut}` : myTurn ? "À toi de jouer" : `Au tour de ${opponentName}`}</Card>
+                {!isOver && (
+                  <Card className={`p-4 text-center text-sm font-bold ${timedOut ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300" : myTurn ? "border-violet-500/30 bg-violet-500/[0.06] text-violet-300" : "text-[#6b6882]"}`}>{timedOut ? `Temps écoulé pour ${timedOut === pseudo ? "toi" : timedOut}` : myTurn ? "À toi de jouer" : `Au tour de ${opponentName}`}</Card>
+                )}
                 {moves.length > 0 && <Card className="p-4"><p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups</p><div className="flex flex-wrap gap-1.5">{moves.slice(-12).map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}</div></Card>}
                 {lichessGameUrl && (
                   <a href={lichessGameUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] py-2.5 text-xs font-extrabold text-[#c4c0d4] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]">
@@ -1611,42 +1668,78 @@ export function RendezVousApp() {
                 )}
                 {isOver && !rematchOpen && (
                   <div className="space-y-3">
-                    {/* Bandeau résultat : victoire / défaite / nulle */}
-                    <div className={`flex items-center justify-center gap-2.5 rounded-2xl border px-4 py-3.5 ${resultTone}`}>
-                      <span className={`h-2.5 w-2.5 rounded-full ${resultDot}`} />
+                    {/* Bandeau résultat : icône + titre compact, clic → modifier le rendez-vous */}
+                    <button
+                      type="button"
+                      onClick={openRematchEditor}
+                      className={`flex w-full items-center justify-center gap-2.5 rounded-2xl border px-4 py-3.5 text-center transition active:scale-[0.98] ${resultTone}`}
+                      title={matchDays.length > 0 ? "Double-clic pour modifier la prochaine date" : "Prévoir une revanche"}
+                    >
+                      {iWon ? <Trophy size={17} className="shrink-0" /> : iLost ? <Frown size={17} className="shrink-0" /> : <Handshake size={17} className="shrink-0" />}
                       <p className="text-sm font-black">{resultTitle}</p>
-                      <p className="text-[11px] font-bold opacity-80">{resultDetail}</p>
-                    </div>
-                    {/* Card de fin enrichie (réutilise l'idée de la card de base) */}
-                    <Card className="overflow-hidden">
-                      <div className="flex items-center gap-3.5 p-4">
-                        <div className="relative shrink-0">
-                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#2a243a] font-black text-xs text-[#c4c0d4] ring-1 ring-white/[0.08]">{opponentName.slice(0, 2).toUpperCase()}</div>
-                          <span className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#13151d] ${resultDot}`} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-black capitalize text-white">{nextJoustDate ? nextJoustDate.toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "Partie terminée"}</p>
-                          <p className="mt-1 truncate text-left text-[13px] font-extrabold text-[#c4c0d4]">{opponentName}</p>
-                          <p className="mt-1.5 text-[11px] font-bold text-[#6b6882]">♞ Échecs · {tc.label} ({tc.tag})</p>
-                        </div>
-                      </div>
-                    </Card>
-                    {/* Actions selon récurrence */}
+                      <p className="truncate text-[11px] font-bold opacity-80">{resultDetail}</p>
+                    </button>
+
+                    {/* Prochaine date planifiée : clic unique → modifier, double-clic → annuler */}
                     {matchDays.length > 0 ? (
-                      <div className="flex items-center justify-center gap-4 px-2">
-                        <button onClick={openRematchEditor} className="text-xs font-extrabold text-violet-300 transition hover:text-violet-200">Modifier</button>
-                        <button
-                          onClick={() => void handleCardCancelClick(match)}
-                          className={`text-xs font-extrabold transition ${cancelConfirmId === match.id ? "animate-pulse text-rose-300" : "text-[#6b6882] hover:text-[#c4c0d4]"}`}
-                        >
-                          {cancelConfirmId === match.id ? "Confirmer l'annulation ?" : "Annuler"}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={openRematchEditor}
+                        onDoubleClick={() => void handleCardCancelClick(match)}
+                        title="Clic : modifier · Double-clic : annuler le rendez-vous"
+                        className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.06] bg-[#13151d] px-4 py-3 text-left shadow-lg shadow-black/20 transition-all duration-200 active:scale-[0.98] hover:border-violet-500/30"
+                      >
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/15 text-violet-200 ring-1 ring-violet-500/25"><Calendar size={16} /></div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain rendez-vous</p>
+                          <p className="truncate text-sm font-black capitalize text-white">{nextJoustDate ? nextJoustDate.toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                        </div>
+                        <Pencil size={14} className="shrink-0 text-[#3a3851]" />
+                      </button>
                     ) : (
-                      <div className="space-y-2">
-                        <Btn onClick={openRematchEditor} disabled={saving}><span className="inline-flex items-center gap-2"><Swords size={16} /> Prévoir la revanche</span></Btn>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={openRematchEditor}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white/[0.03] px-4 py-3.5 text-sm font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.06] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]"
+                      >
+                        <Swords size={16} className="text-violet-300" /> Prévoir la revanche
+                      </button>
                     )}
+
+                    {/* Actions : modifier / annuler (double-clic) — tout en icônes pour aérer */}
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={openRematchEditor}
+                        aria-label="Modifier le rendez-vous"
+                        title="Modifier"
+                        className="grid h-11 w-11 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-violet-300 active:scale-90"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      {matchDays.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={openRematchEditor}
+                          aria-label="Prévoir une revanche"
+                          title="Revanche"
+                          className="grid h-11 w-11 place-items-center rounded-xl bg-violet-600/15 text-violet-200 ring-1 ring-violet-500/30 transition hover:bg-violet-600/25 active:scale-90"
+                        >
+                          <Swords size={16} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleCardCancelClick(match)}
+                        onDoubleClick={() => void handleCardCancelClick(match)}
+                        aria-label={cancelConfirmId === match.id ? "Confirmer l'annulation" : "Annuler la joust"}
+                        title={cancelConfirmId === match.id ? "Double-clic pour confirmer l'annulation" : "Annuler (double-clic)"}
+                        className={`grid h-11 w-11 place-items-center rounded-xl ring-1 transition active:scale-90 ${cancelConfirmId === match.id ? "animate-pulse border border-rose-500/60 bg-rose-500/20 text-rose-200 shadow-lg shadow-rose-500/20" : "bg-white/[0.04] text-[#6b6882] ring-white/[0.06] hover:text-rose-300"}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    {/* Ligne du bas : retour à l'accueil */}
                     <div className="text-center">
                       <button onClick={leaveMatch} className="text-xs font-bold text-[#6b6882] transition hover:text-[#c4c0d4]">Retour à l'accueil</button>
                     </div>
@@ -1756,6 +1849,3 @@ export function RendezVousApp() {
   );
 }
 
-function PlayerBar({ name, color, active, clock, low }: { name: string; color: "w" | "b"; active: boolean; clock: string; low?: boolean }) {
-  return <div className={`flex items-center justify-between rounded-2xl border px-4 py-2.5 transition-colors ${active ? "border-violet-500/30 bg-violet-600/[0.06]" : "border-white/[0.06] bg-[#13151d]"}`}><div className="flex items-center gap-2.5"><div className={`grid h-8 w-8 place-items-center rounded-lg shadow-md ring-1 ring-white/[0.06] ${color === "w" ? "bg-gradient-to-br from-[#3a2d55] to-[#2a1f3d]" : "bg-gradient-to-br from-[#1a1328] to-[#0e0918]"}`}><ChessPiece color={color} type="n" className={`h-6 w-6 ${color === "w" ? "text-[#e4d6ff]" : "text-[#6b5199]"}`} /></div><span className="text-xs font-extrabold text-white">{name}</span><Dot on={active} /></div><div className="flex items-center gap-2"><span className="rounded-lg bg-white/[0.04] px-2 py-1 text-[10px] font-bold text-[#6b6882] ring-1 ring-white/[0.04]">{color === "w" ? "Blancs" : "Noirs"}</span><span className={`min-w-[3.2rem] rounded-lg px-2 py-1 text-center font-mono text-sm font-black ring-1 ${low ? "animate-pulse bg-rose-500/15 text-rose-300 ring-rose-500/30" : active ? "bg-violet-600/15 text-violet-200 ring-violet-500/30" : "bg-white/[0.04] text-[#c4c0d4] ring-white/[0.05]"}`}>{clock}</span></div></div>;
-}
