@@ -242,6 +242,8 @@ export function RendezVousApp() {
   const notify5minRef = useRef(true);
   const [editing, setEditing] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [showMoves, setShowMoves] = useState(false);
   const cancelTimer = useRef<number | null>(null);
   const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
   const prevWaitingRef = useRef(false);
@@ -382,8 +384,16 @@ export function RendezVousApp() {
     } catch { /* */ }
   }, []);
 
-  /* Ouvre un joust depuis la liste des cards. */
+  /* Ouvre un joust depuis la liste des cards.
+     Les jousts validées (armed) restent sur l'accueil : la card dépliée gère
+     déjà l'arrivée et le lancement — pas besoin d'un écran intermédiaire. */
   const openMatch = useCallback(async (m: Match) => {
+    const isArmedMatch = m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed && !m.result;
+    if (isArmedMatch) {
+      setExpandedId(m.id);
+      setScreen("home");
+      return;
+    }
     localStorage.setItem(MATCH_KEY, m.id);
     await load(m.id);
     setScreen("match");
@@ -505,7 +515,16 @@ export function RendezVousApp() {
     } catch { setAuthError("Connexion impossible."); } finally { setSaving(false); }
   }
 
+  function handleLogoutClick() {
+    setConfirmLogout(true);
+  }
+
+  function cancelLogout() {
+    setConfirmLogout(false);
+  }
+
   async function logout() {
+    setConfirmLogout(false);
     try { await fetch("/api/auth/logout", { method: "POST" }); } catch { /* */ }
     void clearPushContext();
     void cancelScheduledNotif();
@@ -970,7 +989,7 @@ export function RendezVousApp() {
               {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
               {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
 {pseudo && <button type="button" onClick={goProfile} className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06] transition active:scale-95 hover:bg-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></button>}
-              {authUser && <button type="button" onClick={() => void logout()} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
+              {authUser && <button type="button" onClick={handleLogoutClick} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
             </div>
           </div>
         </header>
@@ -1351,16 +1370,20 @@ export function RendezVousApp() {
             </Card>
 
             <Card className="p-5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-extrabold text-white">Notifications</p>
                   <p className="mt-0.5 text-[10px] text-[#6b6882]">Géré depuis un joust ouvert</p>
                 </div>
-                <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge tone={serverPushSubscribed ? "ok" : "muted"}>{serverPushSubscribed ? "Activées" : "—"}</Badge>
+                  {match && <button type="button" onClick={() => void testPush()} aria-label="Tester le push" title="Envoyer une notification push de test" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-violet-300"><BellRing size={15} /></button>}
+                  {match && <button type="button" onClick={() => { refreshNotif(); setTutorialOpen(true); }} aria-label="Notifications" className={`relative grid h-8 w-8 place-items-center rounded-xl transition active:scale-90 ${pushSubscribed ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30" : "bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"}`}><Bell size={15} />{!pushSubscribed && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}</button>}
+                </div>
               </div>
             </Card>
 
-            <Btn variant="danger" onClick={() => void logout()}>Se déconnecter</Btn>
+            <Btn variant="danger" onClick={handleLogoutClick}>Se déconnecter</Btn>
           </div>
         )}
 
@@ -1552,9 +1575,7 @@ export function RendezVousApp() {
                       )}
                       {bothArrived && (
                         <div className="mt-4 rounded-2xl bg-emerald-500/[0.1] px-4 py-4 ring-1 ring-emerald-500/30">
-                          <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés !</p>
-                          <p className="mt-2 text-xs font-bold text-emerald-200/80">Aucun départ automatique — lance la partie à la main.</p>
-                          <div className="mt-4"><Btn disabled={saving} onClick={() => void patch({ action: "start", playerName: pseudo }, "La partie est lancée !")}>Lancer la partie</Btn></div>
+                          <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés — la partie se lance…</p>
                         </div>
                       )}
                     </div>
@@ -1693,7 +1714,28 @@ export function RendezVousApp() {
                 {!isOver && (
                   <Card className={`p-4 text-center text-sm font-bold ${timedOut ? "border-rose-500/30 bg-rose-500/[0.08] text-rose-300" : myTurn ? "border-violet-500/30 bg-violet-500/[0.06] text-violet-300" : "text-[#6b6882]"}`}>{timedOut ? `Temps écoulé pour ${timedOut === pseudo ? "toi" : timedOut}` : myTurn ? "À toi de jouer" : `Au tour de ${opponentName}`}</Card>
                 )}
-                {moves.length > 0 && <Card className="p-4"><p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups</p><div className="flex flex-wrap gap-1.5">{moves.slice(-12).map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}</div></Card>}
+                {moves.length > 0 && (
+                  isOver ? (
+                    <Card className="p-4">
+                      <button
+                        type="button"
+                        onClick={() => setShowMoves((v) => !v)}
+                        className="flex w-full items-center justify-between gap-2 rounded-2xl bg-white/[0.02] px-4 py-2.5 text-left ring-1 ring-white/[0.06] transition active:scale-[0.98] hover:bg-white/[0.05]"
+                      >
+                        <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups de la partie</span>
+                        <span className="rounded-full bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-bold text-[#8b87a3] ring-1 ring-white/[0.05]">{moves.length}</span>
+                        {showMoves ? <ChevronUp size={14} className="text-[#6b6882]" /> : <ChevronDown size={14} className="text-[#6b6882]" />}
+                      </button>
+                      {showMoves && (
+                        <div className="anim-fade-up mt-3 flex flex-wrap gap-1.5">
+                          {moves.map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}
+                        </div>
+                      )}
+                    </Card>
+                  ) : (
+                    <Card className="p-4"><p className="mb-3 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Coups</p><div className="flex flex-wrap gap-1.5">{moves.slice(-12).map((m) => <span key={m.id} className="rounded-lg bg-white/[0.04] px-2.5 py-1 font-mono text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.04]">{m.san}</span>)}</div></Card>
+                  )
+                )}
                 {lichessGameUrl && (
                   <a href={lichessGameUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] py-2.5 text-xs font-extrabold text-[#c4c0d4] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]">
                     ♞ Voir sur Lichess
@@ -1851,6 +1893,21 @@ export function RendezVousApp() {
             <div className="mt-5 grid grid-cols-2 gap-2">
               <Btn variant="secondary" onClick={() => void patch({ action: "draw-decline", playerName: pseudo }, "Nulle refusée")} disabled={saving}>Refuser</Btn>
               <Btn onClick={() => void patch({ action: "draw-accept", playerName: pseudo }, "Nulle acceptée !")} disabled={saving}>Accepter</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation de déconnexion */}
+      {confirmLogout && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={cancelLogout}>
+          <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <Badge tone="danger">Déconnexion</Badge>
+            <p className="mt-3 text-sm font-black text-white">Quitter ton compte ?</p>
+            <p className="mt-2 text-[11px] leading-4 text-[#6b6882]">Tes jousts et notifications seront interrompus sur cet appareil.</p>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <Btn variant="secondary" onClick={cancelLogout}>Annuler</Btn>
+              <Btn variant="danger" onClick={() => void logout()}>Se déconnecter</Btn>
             </div>
           </div>
         </div>

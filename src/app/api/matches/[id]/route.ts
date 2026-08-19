@@ -251,6 +251,24 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
         .where(eq(matches.id, id))
         .returning();
 
+      /* Quand les DEUX joueurs sont arrivés → la partie démarre automatiquement,
+         sans bouton « Lancer la partie » supplémentaire. */
+      const bothArrivedNow = Boolean(updated.arrivalCreator && updated.arrivalGuest);
+      if (bothArrivedNow) {
+        const [started] = await db
+          .update(matches)
+          .set({ status: "playing", updatedAt: now })
+          .where(eq(matches.id, id))
+          .returning();
+        const withClocks = await startGame(started, now);
+        const otherPlayer = playerName === match.whitePlayer ? match.blackPlayer : match.whitePlayer;
+        if (otherPlayer) {
+          notifyPlayer(id, otherPlayer, "▶️ La partie est lancée !", "Les deux joueurs sont arrivés — la partie commence.");
+        }
+        broadcastMatchChange(id, { action: "start" });
+        return Response.json({ match: serializeMatch(withClocks ?? started) });
+      }
+
       /* Créateur arrivé → notifier l'invité qu'il peut valider son arrivée. */
       if (isCreator && match.guestName) {
         notifyPlayer(id, match.guestName, "🎯 Ton adversaire est arrivé !", `${match.creatorName} t'attend — valide ton arrivée pour lancer la partie.`);
