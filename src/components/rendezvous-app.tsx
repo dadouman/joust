@@ -317,6 +317,8 @@ type FriendRequest = {
     const [filtersVisible, setFiltersVisible] = useState(false);
     /* Réglages du profil (engrenage) : filtres + notifications groupés */
     const [settingsOpen, setSettingsOpen] = useState(false);
+    /* Onglet actif de la card Amis : "amis" | "demandes" */
+    const [friendTab, setFriendTab] = useState<"amis" | "demandes">("amis");
 
   /* Amis + historique */
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -1153,6 +1155,21 @@ type FriendRequest = {
               </div>
               <div className="flex items-center gap-2">
   {pseudo && <button type="button" onClick={goProfile} className="flex items-center gap-1.5 rounded-xl bg-white/[0.03] px-2.5 py-1.5 ring-1 ring-white/[0.06] transition active:scale-95 hover:bg-white/[0.06]"><span className="grid h-5 w-5 place-items-center rounded-md bg-violet-600/30 text-[9px] font-black text-violet-200">{pseudo.slice(0, 2).toUpperCase()}</span><span className="text-[11px] font-extrabold text-white">{pseudo}</span></button>}
+                {/* Cloche demandes d'amis : badge quand il y a des demandes en attente */}
+                {authUser && (
+                  <button
+                    type="button"
+                    aria-label={`${friendRequests.length} demande${friendRequests.length > 1 ? "s" : ""} d'ami`}
+                    title={friendRequests.length > 0 ? `${friendRequests.length} demande${friendRequests.length > 1 ? "s" : ""} d'ami en attente` : "Demandes d'amis"}
+                    className={`relative grid h-8 w-8 place-items-center rounded-xl ring-1 transition active:scale-90 ${friendRequests.length > 0 ? "bg-amber-500/15 text-amber-300 ring-amber-500/30" : "bg-white/[0.04] text-[#6b6882] ring-white/[0.06] hover:text-violet-300"}`}
+                    onClick={() => { setScreen("profile"); setFriendTab("demandes"); }}
+                  >
+                    <Bell size={14} />
+                    {friendRequests.length > 0 && (
+                      <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-black text-white shadow-md shadow-rose-500/40">{friendRequests.length}</span>
+                    )}
+                  </button>
+                )}
                 {authUser && <button type="button" onClick={handleLogoutClick} aria-label="Se déconnecter" title="Se déconnecter" className="grid h-8 w-8 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition active:scale-90 hover:text-rose-300"><LogOut size={14} /></button>}
               </div>
             </div>
@@ -1531,7 +1548,7 @@ type FriendRequest = {
                     <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-600/15 ring-1 ring-violet-500/25"><Users size={16} className="text-violet-200" /></div>
                     <div>
                       <p className="text-sm font-extrabold text-white">Amis</p>
-                      <p className="mt-0.5 text-[10px] text-[#6b6882]">{friends.length} ami{friends.length > 1 ? "s" : ""}</p>
+                      <p className="mt-0.5 text-[10px] text-[#6b6882]">{friends.length} ami{friends.length > 1 ? "s" : ""} · {friendRequests.length} demande{friendRequests.length > 1 ? "s" : ""}</p>
                     </div>
                   </div>
                   <button
@@ -1543,88 +1560,119 @@ type FriendRequest = {
                   </button>
                 </div>
 
-                {/* Demandes d'ami reçues */}
-                {friendRequests.length > 0 && (
+                {/* Onglets Amis / Demandes */}
+                <div className="mt-4 grid grid-cols-2 gap-1.5 rounded-xl bg-white/[0.03] p-1 ring-1 ring-white/[0.05]">
+                  <button
+                    type="button"
+                    onClick={() => setFriendTab("amis")}
+                    aria-pressed={friendTab === "amis"}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-[11px] font-extrabold transition-all ${friendTab === "amis" ? "bg-violet-600 text-white shadow-md shadow-violet-600/25" : "text-[#6b6882] hover:text-white"}`}
+                  >
+                    <Users size={12} /> Amis ({friends.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFriendTab("demandes")}
+                    aria-pressed={friendTab === "demandes"}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-[11px] font-extrabold transition-all ${friendTab === "demandes" ? "bg-amber-500 text-white shadow-md shadow-amber-500/25" : "text-[#6b6882] hover:text-white"}`}
+                  >
+                    <Bell size={12} /> Demandes ({friendRequests.length})
+                  </button>
+                </div>
+
+                {/* Contenu : demandes d'ami */}
+                {friendTab === "demandes" && (
                   <div className="mt-4 space-y-2">
-                    <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-300">
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
-                      {friendRequests.length} demande{friendRequests.length > 1 ? "s" : ""} d'ami
-                    </p>
-                    {friendRequests.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <Avatar name={r.fromPseudo} />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-extrabold text-white">{r.fromPseudo}</p>
-                            <p className="text-[9px] font-semibold text-[#6b6882]">Le {new Date(r.createdAt).toLocaleDateString("fr-FR")}</p>
+                    {friendRequests.length === 0 ? (
+                      <p className="rounded-xl bg-white/[0.02] px-3 py-2.5 text-center text-[10px] font-bold text-[#6b6882] ring-1 ring-white/[0.04]">Aucune demande d'ami en attente.</p>
+                    ) : (
+                      <>
+                        <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.16em] text-amber-300">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                          {friendRequests.length} demande{friendRequests.length > 1 ? "s" : ""} d'ami
+                        </p>
+                        {friendRequests.map((r) => (
+                          <div key={r.id} className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <Avatar name={r.fromPseudo} />
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-extrabold text-white">{r.fromPseudo}</p>
+                                <p className="text-[9px] font-semibold text-[#6b6882]">Le {new Date(r.createdAt).toLocaleDateString("fr-FR")}</p>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void respondFriendRequest(r.id, "accept")}
+                                disabled={friendReqLoading}
+                                className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/25 active:scale-90"
+                              >
+                                <Check size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void respondFriendRequest(r.id, "decline")}
+                                disabled={friendReqLoading}
+                                className="grid h-7 w-7 place-items-center rounded-lg bg-rose-500/10 text-rose-300 ring-1 ring-rose-500/25 transition hover:bg-rose-500/20 active:scale-90"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex shrink-0 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void respondFriendRequest(r.id, "accept")}
-                            disabled={friendReqLoading}
-                            className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/25 active:scale-90"
-                          >
-                            <Check size={13} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void respondFriendRequest(r.id, "decline")}
-                            disabled={friendReqLoading}
-                            className="grid h-7 w-7 place-items-center rounded-lg bg-rose-500/10 text-rose-300 ring-1 ring-rose-500/25 transition hover:bg-rose-500/20 active:scale-90"
-                          >
-                            <X size={13} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                        ))}
+                      </>
+                    )}
                   </div>
                 )}
 
-                {/* Envoyer une demande d'ami */}
-                <form
-                  onSubmit={(e) => { e.preventDefault(); void addFriend(friendInput); }}
-                  className="mt-4 flex gap-2"
-                >
-                  <input
-                    value={friendInput}
-                    onChange={(e) => setFriendInput(e.target.value)}
-                    maxLength={40}
-                    placeholder="Pseudo d'un ami…"
-                    className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-xs font-bold text-white outline-none placeholder:text-[#3a3851] focus:border-violet-500/60"
-                  />
-                  <Btn type="submit" disabled={friendLoading || !friendInput.trim()} variant="secondary" className="!w-auto !px-4 !py-2.5 !text-xs">
-                    <span className="inline-flex items-center gap-1.5"><UserPlus size={13} /> Demander</span>
-                  </Btn>
-                </form>
+                {/* Contenu : amis */}
+                {friendTab === "amis" && (
+                  <>
+                    {/* Envoyer une demande d'ami */}
+                    <form
+                      onSubmit={(e) => { e.preventDefault(); void addFriend(friendInput); }}
+                      className="mt-4 flex gap-2"
+                    >
+                      <input
+                        value={friendInput}
+                        onChange={(e) => setFriendInput(e.target.value)}
+                        maxLength={40}
+                        placeholder="Pseudo d'un ami…"
+                        className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-xs font-bold text-white outline-none placeholder:text-[#3a3851] focus:border-violet-500/60"
+                      />
+                      <Btn type="submit" disabled={friendLoading || !friendInput.trim()} variant="secondary" className="!w-auto !px-4 !py-2.5 !text-xs">
+                        <span className="inline-flex items-center gap-1.5"><UserPlus size={13} /> Demander</span>
+                      </Btn>
+                    </form>
 
-                {/* Liste des amis */}
-                {friends.length > 0 ? (
-                  <div className="mt-4 space-y-2">
-                    {friends.map((f) => (
-                      <div key={f.pseudo} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-3 py-2.5 ring-1 ring-white/[0.05]">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <Avatar name={f.pseudo} />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-extrabold text-white">{f.pseudo}</p>
-                            <p className="text-[9px] font-semibold text-[#6b6882]">Ami depuis le {new Date(f.addedAt).toLocaleDateString("fr-FR")}</p>
+                    {/* Liste des amis */}
+                    {friends.length > 0 ? (
+                      <div className="mt-4 space-y-2">
+                        {friends.map((f) => (
+                          <div key={f.pseudo} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.02] px-3 py-2.5 ring-1 ring-white/[0.05]">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <Avatar name={f.pseudo} />
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-extrabold text-white">{f.pseudo}</p>
+                                <p className="text-[9px] font-semibold text-[#6b6882]">Ami depuis le {new Date(f.addedAt).toLocaleDateString("fr-FR")}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void removeFriend(f.pseudo)}
+                              aria-label={`Retirer ${f.pseudo} de tes amis`}
+                              title={`Retirer ${f.pseudo}`}
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[0.03] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-rose-300 active:scale-90"
+                            >
+                              <Trash2 size={12} />
+                            </button>
                           </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void removeFriend(f.pseudo)}
-                          aria-label={`Retirer ${f.pseudo} de tes amis`}
-                          title={`Retirer ${f.pseudo}`}
-                          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[0.03] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-rose-300 active:scale-90"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-4 rounded-xl bg-white/[0.02] px-3 py-2.5 text-center text-[10px] font-bold text-[#6b6882] ring-1 ring-white/[0.04]">Ajoute tes partenaires de joust pour les retrouver ici.</p>
+                    ) : (
+                      <p className="mt-4 rounded-xl bg-white/[0.02] px-3 py-2.5 text-center text-[10px] font-bold text-[#6b6882] ring-1 ring-white/[0.04]">Ajoute tes partenaires de joust pour les retrouver ici.</p>
+                    )}
+                  </>
                 )}
               </Card>
 
