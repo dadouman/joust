@@ -1036,6 +1036,29 @@ type FriendRequest = {
       try { await navigator.clipboard.writeText(text); notify(msg); } catch { notify("Copie impossible"); }
     }
 
+    /* Message d'invitation pour n'importe quel match (card en attente, QR…). */
+    function buildShareMessageFor(m: Match) {
+      const days = parseDays(m.recurrenceDays);
+      const t = tcInfo(m.timeControl);
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      return (
+        `♞ ${m.creatorName} t'invite à une joust !\n` +
+        `⏰ ${describeRecurrence(m.timeOfDay, days)}\n` +
+        `⚡ ${t.label} (${t.tag})\n` +
+        `Code : ${m.inviteCode}\n` +
+        `Rejoins : ${origin}/?code=${m.inviteCode}`
+      );
+    }
+
+    /* Partage depuis une card du home : Web Share si dispo, sinon copie du message. */
+    async function shareMatch(m: Match) {
+      const msg = buildShareMessageFor(m);
+      if (navigator.share) {
+        try { await navigator.share({ title: "Joust", text: msg }); return; } catch { /* cancelled */ }
+      }
+      await copy(msg, "Message copié !");
+    }
+
     /* ── Notifications ── */
     async function enableNotifs() {
       if (!match) return;
@@ -1440,7 +1463,7 @@ type FriendRequest = {
                       /* Une card auto-dépliée (heure arrivée, <1h) peut être repliée
                         manuellement ; elle peut aussi être rouverte depuis l'en-tête. */
                       const manuallyCollapsed = collapsedIds.has(m.id);
-                      const showDetail = (armed || playing || negotiating) && (expanded || withinHour || mUnlocked) && !manuallyCollapsed;
+                      const showDetail = (armed || playing || negotiating || waitingPlayer) && (expanded || withinHour || mUnlocked) && !manuallyCollapsed;
                       const iMustAnswerCard = Boolean(m.guestName && pending && !(iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
                       const waitingOppCard = Boolean(m.guestName && pending && (iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
                       /* Statut → pastille de couleur dans l'icône à gauche */
@@ -1467,7 +1490,7 @@ type FriendRequest = {
                           {/* En-tête compact cliquable */}
                           <button
                             onClick={() => {
-                              if (armed || negotiating) {
+                              if (armed || negotiating || waitingPlayer) {
                                 /* Ouvre/ferme la card (l'ouverture retire la repliure manuelle) */
                                 setCollapsedIds((prev) => { const n = new Set(prev); if (!expanded || manuallyCollapsed) n.delete(m.id); else n.add(m.id); return n; });
                                 setExpandedId(expanded && !manuallyCollapsed ? null : m.id);
@@ -1523,8 +1546,47 @@ type FriendRequest = {
                           {/* Version dépliée en grand (fusion card/détail) pour les jousts validés ou en cours */}
                           {showDetail && (
                             <div className="anim-fade-up border-t border-white/[0.05]">
+                              {/* En attente d'un joueur : code + partage direct depuis la card */}
+                              {waitingPlayer && (
+                                <div className="space-y-2 px-5 pb-2 pt-2">
+                                  <div className="rounded-2xl border border-violet-500/25 bg-violet-500/[0.06] px-4 py-3 text-center">
+                                    <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6b6882]">Code de la joust</p>
+                                    <p className="mt-1 font-mono text-2xl font-black tracking-[0.2em] text-white">{m.inviteCode}</p>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); void shareMatch(m); }}
+                                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-violet-600 py-2.5 text-xs font-extrabold text-white shadow-lg shadow-violet-600/25 transition active:scale-95"
+                                    >
+                                      <Share2 size={13} /> Partager
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setQrMatchId(m.id); }}
+                                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95"
+                                    >
+                                      <QrCode size={13} /> QR code
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); void copy(m.inviteCode, "Code copié !"); }}
+                                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95"
+                                    >
+                                      <Copy size={13} /> Copier le code
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); void copy(buildShareMessageFor(m), "Message copié !"); }}
+                                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95"
+                                    >
+                                      <Copy size={13} /> Copier le message
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                               {/* Timer hypnotique quand pas encore l'heure */}
-                              {!mUnlocked && (
+                              {!mUnlocked && !waitingPlayer && (
                                 <>
                                   <div className="relative px-6 py-4 text-center">
                                     <div className="pointer-events-none absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
@@ -2521,18 +2583,28 @@ type FriendRequest = {
 
         <footer className="relative z-10 border-t border-white/[0.04] bg-[#08090e]/80 pb-[calc(var(--safe-bottom)+1rem)] pt-4 text-center backdrop-blur-xl"><p className="text-[10px] font-bold text-[#3a3851]">Joust</p></footer>
 
-        {/* QR modal */}
-        {showQr && match && (
-          <div className="fixed inset-0 z-[55] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={() => setShowQr(false)}>
-            <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between"><Badge tone="accent">Scanner pour rejoindre</Badge><button onClick={() => setShowQr(false)} aria-label="Fermer" className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={13} /></button></div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/qr?url=${encodeURIComponent(inviteLink)}`} alt={`QR code pour rejoindre la joust ${match.inviteCode}`} className="mx-auto mt-5 h-56 w-56 rounded-2xl bg-white p-3" />
-              <p className="mt-4 font-mono text-2xl font-black tracking-[0.28em] text-white">{match.inviteCode}</p>
-              <p className="mt-2 text-[11px] leading-4 text-[#6b6882]">Ton ami scanne ce code avec l'appareil photo pour ouvrir la joust.</p>
+        {/* QR modal — depuis l'écran match (showQr + match) ou depuis une card du home (qrMatchId) */}
+        {(() => {
+          const qMatch = qrMatchId ? myMatches.find((x) => x.id === qrMatchId) ?? null : (showQr ? match : null);
+          if (!qMatch) return null;
+          const origin = typeof window !== "undefined" ? window.location.origin : "";
+          const qrUrl = `${origin}/?code=${qMatch.inviteCode}`;
+          return (
+            <div className="fixed inset-0 z-[55] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={() => { setShowQr(false); setQrMatchId(null); }}>
+              <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between"><Badge tone="accent">Scanner pour rejoindre</Badge><button onClick={() => { setShowQr(false); setQrMatchId(null); }} aria-label="Fermer" className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={13} /></button></div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`/api/qr?url=${encodeURIComponent(qrUrl)}`} alt={`QR code pour rejoindre la joust ${qMatch.inviteCode}`} className="mx-auto mt-5 h-56 w-56 rounded-2xl bg-white p-3" />
+                <p className="mt-4 font-mono text-2xl font-black tracking-[0.28em] text-white">{qMatch.inviteCode}</p>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => void copy(qMatch.inviteCode, "Code copié !")} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95"><Copy size={13} /> Copier le code</button>
+                  <button type="button" onClick={() => void copy(`${qrUrl}`, "Lien copié !")} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95"><Copy size={13} /> Copier le lien</button>
+                </div>
+                <p className="mt-2 text-[11px] leading-4 text-[#6b6882]">Ton ami scanne ce code avec l'appareil photo pour ouvrir la joust.</p>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Promotion modal */}
         {promotionPending && (
