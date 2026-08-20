@@ -271,16 +271,12 @@ type FriendRequest = {
     const [dragOver, setDragOver] = useState<string | null>(null);
     const [promotionPending, setPromotionPending] = useState<{ from: string; to: string } | null>(null);
     const [toast, setToast] = useState<string | null>(null);
-    const [showQr, setShowQr] = useState(false);
     const [drawModalOpen, setDrawModalOpen] = useState(false);
     const [tutorialOpen, setTutorialOpen] = useState(false);
     const [pushSubscribed, setPushSubscribed] = useState(false);
     const [serverPushSubscribed, setServerPushSubscribed] = useState<boolean | null>(null);
     const [notify5min, setNotify5min] = useState(true);
     const notify5minRef = useRef(true);
-    const [editing, setEditing] = useState(false);
-    const [confirmCancel, setConfirmCancel] = useState(false);
-    const cancelTimer = useRef<number | null>(null);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showMoves, setShowMoves] = useState(false);
     const prevWaitingRef = useRef(false);
@@ -336,9 +332,6 @@ type FriendRequest = {
     const [historyData, setHistoryData] = useState<HistoryData | null>(null);
     const [historyLoading, setHistoryLoading] = useState(false);
     const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
-    /* Invitation par pseudo (écran d'attente + création) */
-    const [invitePseudoInput, setInvitePseudoInput] = useState("");
-    const [inviteError, setInviteError] = useState("");
 
     const chess = useMemo(() => new Chess(match?.lastFen ?? undefined), [match?.lastFen]);
 
@@ -814,7 +807,10 @@ type FriendRequest = {
         const d = (await r.json()) as { match?: Match; error?: string };
         if (d.match) {
           localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] });
-          /* Retour à l'accueil avec la card de la nouvelle joust DÉPLIÉE */
+          /* Insère la nouvelle joust dans la liste locale pour que sa card
+            (avec code + partage) soit visible immédiatement à l'accueil,
+            sans attendre le refresh réseau. */
+          setMyMatches((prev) => [d.match!, ...prev.filter((x) => x.id !== d.match!.id)]);
           setCollapsedIds((prev) => { const n = new Set(prev); n.delete(d.match!.id); return n; });
           setExpandedId(d.match.id);
           setScreen("home");
@@ -822,27 +818,6 @@ type FriendRequest = {
         }
         else notify(d.error ?? "Création impossible");
       } catch { notify("Création impossible"); } finally { setSaving(false); }
-    }
-
-    /* Envoie une invitation à un pseudo via le code d'invitation de la joust.
-      Le destinataire recevra le code (partage) et pourra rejoindre. */
-    async function inviteByPseudo(targetPseudo: string) {
-      if (!match || !targetPseudo.trim()) { setInviteError("Pseudo requis."); return; }
-      setInviteError(""); setSaving(true);
-      try {
-        const msg =
-          `♞ ${pseudo} t'invite à une joust !\n` +
-          `⏰ ${describeRecurrence(match.timeOfDay, matchDays)}\n` +
-          `⚡ ${tc.label} (${tc.tag})\n` +
-          `Code : ${match.inviteCode}\n` +
-          `Rejoins : ${inviteLink}`;
-        /* Pas d'envoi serveur — le navigateur partage via Web Share ou copie
-          pour l'instant ; le pseudo est validé côté client. */
-        if (navigator.share) {
-          try { await navigator.share({ title: "Joust", text: msg }); return; } catch { /* cancelled */ }
-        }
-        await copy(msg, `Invitation envoyée à ${targetPseudo} !`);
-      } catch { setInviteError("Impossible d'envoyer l'invitation."); } finally { setSaving(false); }
     }
 
   /* Envoie une demande d'ami par pseudo (le destinataire doit accepter). */
@@ -914,11 +889,13 @@ type FriendRequest = {
           const jd = (await jr.json()) as { match?: Match; error?: string };
           if (!jd.match) { setJoinError(jd.error ?? "Impossible de rejoindre."); return; }
           localStorage.setItem(MATCH_KEY, jd.match.id); apply({ match: jd.match });
+          setMyMatches((prev) => [jd.match!, ...prev.filter((x) => x.id !== jd.match!.id)]);
           setCollapsedIds((prev) => { const n = new Set(prev); n.delete(jd.match!.id); return n; });
           setExpandedId(jd.match.id); setScreen("home");
           void loadMyMatches(); window.history.replaceState({}, "", "/");
         } else if (d.match.creatorName === pseudo) {
           localStorage.setItem(MATCH_KEY, d.match.id); apply({ match: d.match });
+          setMyMatches((prev) => [d.match!, ...prev.filter((x) => x.id !== d.match!.id)]);
           setCollapsedIds((prev) => { const n = new Set(prev); n.delete(d.match!.id); return n; });
           setExpandedId(d.match.id); setScreen("home");
           void loadMyMatches();
@@ -977,18 +954,6 @@ type FriendRequest = {
     /* Petit helper : un match appartient-il au créateur ? */
     function iCreatorOf(m: Match) { return m.creatorName === pseudo; }
 
-    function sendCounter() {
-      if (!match) return;
-      const next = computeNextOccurrence(timeOfDay, days);
-      void patch({ action: "counter", by: iAmCreator ? "creator" : "guest", timeControl, timeOfDay, recurrenceDays: formatDays(days), scheduledAt: next.toISOString() }, "Contre-proposition envoyée");
-      setEditing(false);
-    }
-
-    function openEditor() {
-      if (!match) return;
-      setTimeOfDay(match.timeOfDay); setDays(matchDays); setTimeControl(tcInfo(match.timeControl).id); setEditing(true);
-    }
-
     /* Ouvre l'éditeur de revanche / modification depuis la fin de partie,
       prérempli avec les paramètres de la partie qui vient de se terminer. */
     function openRematchEditor() {
@@ -1025,13 +990,6 @@ type FriendRequest = {
       void sendMove(from, to);
     }
 
-    async function shareInvite() {
-      if (!match) return;
-      if (navigator.share) {
-        try { await navigator.share({ title: "Joust", text: shareMessage }); return; } catch { /* cancelled */ }
-      }
-      await copy(shareMessage, "Message copié !");
-    }
     async function copy(text: string, msg: string) {
       try { await navigator.clipboard.writeText(text); notify(msg); } catch { notify("Copie impossible"); }
     }
@@ -1176,26 +1134,6 @@ type FriendRequest = {
         void patch({ action: "cancel", playerName: pseudo });
       }
       localStorage.removeItem(MATCH_KEY); setMatch(null); setMoves([]); setScreen("home"); void loadMyMatches();
-    }
-
-    /* Annulation en 2 clics : 1er clic → le bouton passe en rouge,
-      2e clic → annulation réelle + notification à l'adversaire. */
-    function handleCancelClick() {
-      if (!match) return;
-      if (!confirmCancel) {
-        setConfirmCancel(true);
-        if (cancelTimer.current) window.clearTimeout(cancelTimer.current);
-        cancelTimer.current = window.setTimeout(() => setConfirmCancel(false), 4000);
-        return;
-      }
-      if (cancelTimer.current) window.clearTimeout(cancelTimer.current);
-      setConfirmCancel(false);
-      void patch({ action: "cancel", playerName: pseudo }, "Joust annulée");
-      localStorage.removeItem(MATCH_KEY);
-      setMatch(null);
-      setMoves([]);
-      setScreen("home");
-      void loadMyMatches();
     }
 
     /* Annulation d'un joust directement depuis sa card dépliée (détrompeur 2 clics). */
@@ -2084,257 +2022,6 @@ type FriendRequest = {
           {screen === "match" && match && (
             <div className="w-full space-y-4">
 
-              {/* — waiting for opponent — */}
-              {!hasOpponent && (
-                <div className="anim-fade-up space-y-5">
-                  <div className="text-center"><Badge tone="warn"><Dot /> En attente d'un adversaire</Badge><h2 className="mt-4 text-2xl font-black tracking-tight text-white">Ta joust</h2></div>
-                  <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                    <div className="border-b border-white/[0.05] bg-gradient-to-b from-violet-600/[0.08] to-transparent px-6 py-6 text-center">
-                      <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#6b6882]">Code de la joust</p>
-                      <p className="mt-2 font-mono text-4xl font-black tracking-[0.28em] text-white">{match.inviteCode}</p>
-                      <div className="mt-4 flex justify-center gap-2">
-                        <button onClick={() => copy(match.inviteCode, "Code copié !")} className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.05] px-3 py-2 text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.08] active:scale-95"><Copy size={12} /> Code</button>
-                        <button onClick={() => setShowQr(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.05] px-3 py-2 text-[11px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.08] active:scale-95"><QrCode size={12} /> QR code</button>
-                      </div>
-                    </div>
-                    <div className="space-y-3 p-5">
-                      <div className="rounded-2xl bg-white/[0.02] p-4 ring-1 ring-white/[0.04]"><p className="whitespace-pre-line text-[11px] leading-5 text-[#8b87a3]">{shareMessage}</p></div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Btn onClick={shareInvite}><span className="inline-flex items-center gap-1.5"><Share2 size={14} /> Partager</span></Btn>
-                        <Btn variant="secondary" onClick={() => copy(shareMessage, "Message copié !")}><span className="inline-flex items-center gap-1.5"><Copy size={14} /> Copier</span></Btn>
-                      </div>
-
-                      {/* Invitation directe par pseudo */}
-                      <div className="border-t border-white/[0.05] pt-3">
-                        <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Inviter par pseudo</p>
-                        <div className="flex gap-2">
-                          <input
-                            value={invitePseudoInput}
-                            onChange={(e) => { setInvitePseudoInput(e.target.value); setInviteError(""); }}
-                            maxLength={40}
-                            placeholder="Pseudo de ton ami…"
-                            className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-xs font-bold text-white outline-none placeholder:text-[#3a3851] focus:border-violet-500/60"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => { void inviteByPseudo(invitePseudoInput); setInvitePseudoInput(""); }}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-violet-600/20 px-3 py-2.5 text-[11px] font-extrabold text-violet-200 ring-1 ring-violet-500/30 transition hover:bg-violet-600/30 active:scale-95"
-                          >
-                            <Send size={12} /> Envoyer
-                          </button>
-                        </div>
-                        {inviteError && <p className="mt-2 rounded-lg bg-rose-500/[0.08] px-2 py-1.5 text-[10px] font-bold text-rose-300 ring-1 ring-rose-500/20">{inviteError}</p>}
-                        {/* Amis disponibles en un clic */}
-                        {friends.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {friends.map((f) => (
-                              <button
-                                key={f.pseudo}
-                                type="button"
-                                onClick={() => { void inviteByPseudo(f.pseudo); }}
-                                className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2.5 py-1 text-[10px] font-bold text-[#c4c0d4] ring-1 ring-white/[0.06] transition hover:bg-violet-600/20 hover:text-violet-200 active:scale-95"
-                              >
-                                <Users size={9} /> {f.pseudo}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3 text-center"><p className="text-[11px] font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)} · {tc.label}</p></div>
-                  </Card>
-                  <Btn variant="ghost" onClick={leaveMatch}>Annuler la joust</Btn>
-                </div>
-              )}
-
-              {/* — negotiation — */}
-              {hasOpponent && !accepted && !declined && (
-                <div className="anim-fade-up space-y-5">
-                  <div className="text-center">
-                    <Badge tone={iMustAnswer ? "warn" : "accent"}>{iMustAnswer ? "À toi de valider" : "En attente"}</Badge>
-                    <h2 className="mt-4 text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
-                  </div>
-                  <Card className="anim-fade-up-d1 p-6">
-                    <div className="flex items-center justify-center gap-5">
-                      <div className="flex flex-col items-center gap-2"><Avatar name={pseudo} tone="a" size="lg" /><span className="text-[11px] font-extrabold text-white">Toi</span></div>
-                      <span className="text-[10px] font-black text-[#3a3851]">VS</span>
-                      <div className="flex flex-col items-center gap-2"><Avatar name={opponentName} tone="b" size="lg" /><span className="text-[11px] font-extrabold text-white">{opponentName}</span></div>
-                    </div>
-                    {!editing ? (
-                      <>
-                        <div className="mt-6 space-y-3 rounded-2xl bg-white/[0.02] p-4 ring-1 ring-white/[0.04]">
-                          <div className="text-center"><p className="font-mono text-3xl font-black text-white">{match.timeOfDay}</p><p className="mt-1 text-xs font-bold text-violet-300">{describeRecurrence(match.timeOfDay, matchDays)}</p></div>
-                          <div className="flex justify-center gap-1.5 border-t border-white/[0.05] pt-3">{WEEKDAYS.map((d) => <span key={d.value} className={`grid h-7 w-7 place-items-center rounded-lg text-[10px] font-black ${matchDays.includes(d.value) ? "bg-violet-600 text-white" : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>)}</div>
-                          <div className="flex items-center justify-center gap-2 border-t border-white/[0.05] pt-3"><span className="font-mono text-sm font-black text-white">{tc.tag}</span><span className="text-xs font-bold text-[#6b6882]">{tc.label}</span></div>
-                        </div>
-                        <p className="mt-3 text-center text-[11px] text-[#6b6882]">Proposé par <span className="font-bold text-[#c4c0d4]">{lastProposalByMe ? "toi" : opponentName}</span></p>
-                        <div className="mt-5 space-y-2">
-                          {iMustAnswer ? (
-                            <>
-                              <Btn onClick={() => void patch({ action: "accept" }, "Joust validée !")} disabled={saving}>Accepter ces paramètres</Btn>
-                              <Btn variant="secondary" onClick={openEditor} disabled={saving}>Proposer autre chose</Btn>
-                              <Btn variant="danger" onClick={() => void patch({ action: "decline" }, "Joust refusée")} disabled={saving}>Refuser</Btn>
-                            </>
-                          ) : (
-                            <>
-                              <div className="flex items-center justify-center gap-2 rounded-2xl bg-amber-500/[0.06] px-4 py-3 ring-1 ring-amber-500/20"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" /><p className="text-xs font-bold text-amber-200">{opponentName} doit valider…</p></div>
-                              <Btn variant="secondary" onClick={openEditor} disabled={saving}>Modifier ma proposition</Btn>
-                            </>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="mt-6 space-y-4">
-                        <Field label="Heure"><input type="time" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} className={`${inputCls} text-center font-mono text-xl font-black`} /></Field>
-                        <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Jours</span><DayPicker days={days} toggle={toggleDay} setDays={setDays} /></div>
-                        <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Cadence</span><TcPicker value={timeControl} onChange={setTimeControl} compact /></div>
-                        <div className="grid grid-cols-2 gap-2"><Btn variant="secondary" onClick={() => setEditing(false)}>Annuler</Btn><Btn onClick={sendCounter} disabled={saving}>Envoyer</Btn></div>
-                      </div>
-                    )}
-                  </Card>
-                  <Btn variant="ghost" onClick={leaveMatch}>Quitter la joust</Btn>
-                </div>
-              )}
-
-              {/* — declined — */}
-              {declined && match.status !== "cancelled" && (
-                <div className="anim-fade-up space-y-6 text-center"><Badge tone="danger">Joust refusée</Badge><Card className="anim-fade-up-d1 p-8"><p className="text-lg font-black text-white">La joust a été déclinée</p><p className="mt-2 text-sm text-[#6b6882]">Crée une nouvelle joust avec d'autres paramètres.</p><div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div></Card></div>
-              )}
-
-              {/* — arrival check (nouveau flow : pas de timer auto) —
-                La validation d'arrivée n'est possible qu'à l'heure prévue de la
-                joust (jamais avant). Aucun chronomètre ne se déclenche
-                automatiquement : seul l'ultimatum (envoi manuel par un joueur
-                arrivé) déclenche un décompte. Le départ est toujours manuel.
-                Le timer est compact (une ligne), hypnotique, sans texte superflu.
-                La date apparaît sous le titre avec un point, la récurrence des
-                jours dans un bloc séparé sous le timer, et l'annulation se fait
-                en 2 clics (le 1er passe le bouton en rouge). */}
-              {arrivalCheckActive && (
-                /* Cartouche réutilisable : date → joueurs → jeu → timer+récurrence → annuler */
-                <Card className="anim-fade-up-d1 overflow-hidden p-0">
-                  {/* 1. Prochaine date */}
-                  <div className="border-b border-white/[0.05] bg-gradient-to-b from-violet-600/[0.08] to-transparent px-5 py-3 text-center">
-                    <p className="inline-flex items-center justify-center gap-2 text-sm font-bold text-[#c4c0d4]">
-                      {arrivalUnlocked ? "C'est l'heure !" : new Date(match.scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
-                      <Dot on />
-                    </p>
-                  </div>
-
-                  {/* 2. Qui contre qui */}
-                  <div className="px-5 pt-5 text-center">
-                    <h2 className="text-2xl font-black tracking-tight text-white">{match.creatorName} <span className="text-violet-400">vs</span> {match.guestName}</h2>
-                    {/* 3. Le jeu */}
-                    <p className="mt-1.5 text-xs font-bold text-[#6b6882]">♞ Échecs · {tc.label} ({tc.tag})</p>
-                  </div>
-
-                  {/* 4. Timer + récurrence OU validation d'arrivée */}
-                  {!arrivalUnlocked ? (
-                    <>
-                      <div className="relative mt-5 bg-gradient-to-b from-violet-600/[0.08] via-transparent to-transparent px-6 py-6 text-center">
-                        {/* Halo hypnotique */}
-                        <div className="pointer-events-none absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/10 blur-3xl" />
-                        {/* Timer compact sur une ligne */}
-                        <div className="relative mx-auto flex items-baseline justify-center gap-1 font-mono text-3xl font-black tracking-tight text-white sm:text-4xl">
-                          {dd > 0 && <span className="text-violet-300">{dd}<span className="ml-0.5 text-base text-violet-400">j</span></span>}
-                          <span className="tabular-nums">{hh}</span>
-                          <span className="anim-pulse text-violet-400">:</span>
-                          <span className="tabular-nums">{mmv}</span>
-                          <span className="anim-pulse text-violet-400">:</span>
-                          <span className="tabular-nums">{ssv}</span>
-                        </div>
-                      </div>
-                      {/* Récurrence des jours dans un bloc à part */}
-                      <div className="border-t border-white/[0.05] bg-white/[0.015] px-5 py-3">
-                        <div className="flex items-center justify-center gap-1">
-                          {WEEKDAYS.map((d) => { const on = matchDays.includes(d.value); const isNext = new Date(match.scheduledAt).getDay() === d.value; return <span key={d.value} className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-black transition ${on ? (isNext ? "bg-violet-500 text-white shadow-md shadow-violet-600/30" : "bg-violet-600/40 text-violet-200") : "bg-white/[0.03] text-[#3a3851]"}`}>{d.short}</span>; })}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="bg-[#1a1626]">
-                      <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
-                        <div className="flex flex-col items-center gap-3 px-3 py-6">
-                          <Avatar name={match.creatorName} tone="a" />
-                          <p className="text-[11px] font-extrabold text-white">{match.creatorName === pseudo ? "Toi" : match.creatorName}</p>
-                          <Badge tone={Boolean(match.arrivalCreator) ? "ok" : "warn"}>{match.arrivalCreator ? "Arrivé ✓" : "…"}</Badge>
-                        </div>
-                        <div className="flex flex-col items-center gap-3 bg-white/[0.02] px-3 py-6">
-                          <Avatar name={match.guestName} tone="b" />
-                          <p className="text-[11px] font-extrabold text-white">{match.guestName === pseudo ? "Toi" : match.guestName}</p>
-                          <Badge tone={Boolean(match.arrivalGuest) ? "ok" : "warn"}>{match.arrivalGuest ? "Arrivé ✓" : "…"}</Badge>
-                        </div>
-                      </div>
-                      <div className="border-t border-white/[0.05] px-5 pb-6 pt-4 text-center">
-                        {!iAmArrived ? (
-                          <>
-                            <p className="text-[11px] leading-5 text-[#6b6882]">Quand tu arrives, valide ton arrivée pour lancer la joust.</p>
-                            {ultimatumAgainstMe && (
-                              <div className="mt-4 rounded-2xl bg-rose-500/[0.1] px-4 py-4 ring-1 ring-rose-500/30">
-                                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">⏳ Ultimatum de {opponentName}</p>
-                                <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
-                                <p className="mt-2 text-[11px] text-rose-200/80">Valide ton arrivée avant la fin du décompte, sinon tu perds par forfait.</p>
-                              </div>
-                            )}
-                            <div className="mt-4"><Btn variant="giant" disabled={saving} onClick={() => void patch({ action: "arrive", playerName: pseudo }, "Arrivée validée !")}><span className="inline-flex items-center gap-2"><Zap size={20} /> Je suis arrivé(e)</span></Btn></div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="rounded-2xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — tu attends {opponentName}…</p></div>
-                            {!oppArrived && (
-                              <>
-                                {ultimatumActive ? (
-                                  <div className="mt-4 rounded-2xl bg-rose-500/[0.08] px-4 py-4 ring-1 ring-rose-500/30">
-                                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">Ultimatum en cours</p>
-                                    <p className="mt-2 font-mono text-4xl font-black text-rose-300">0:{String(ultimatumDeadlineLeft).padStart(2, "0")}</p>
-                                    <p className="mt-2 text-[11px] text-rose-200/80">{ultimatumByMe ? `${opponentName} a 1 minute pour valider son arrivée, sinon il perd la partie.` : `${opponentName} t'a envoyé un ultimatum — valide ton arrivée immédiatement.`}</p>
-                                  </div>
-                                ) : (
-                                  <div className="mt-4 space-y-2">
-                                    <Btn variant="secondary" disabled={saving || nudgeCooldownLeft > 0} onClick={() => void patch({ action: "nudge", playerName: pseudo }, nudgeCooldownLeft > 0 ? `Relance possible dans ${nudgeCooldownLeft}s` : "Notification relancée !")}>
-                                      {nudgeCooldownLeft > 0 ? `Relayer dans ${nudgeCooldownLeft}s…` : "🔔 Relancer une notification"}
-                                    </Btn>
-                                    <Btn variant="danger" disabled={saving} onClick={() => void patch({ action: "ultimatum", playerName: pseudo }, "Ultimatum envoyé !")}>
-                                      ⏳ Envoyer un ultimatum (1 min)
-                                    </Btn>
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </>
-                        )}
-                        {bothArrived && (
-                          <div className="mt-4 rounded-2xl bg-emerald-500/[0.1] px-4 py-4 ring-1 ring-emerald-500/30">
-                            <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés — la partie se lance…</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleCancelClick}
-                    className={`w-full rounded-2xl py-2 text-sm font-extrabold transition-all duration-300 active:scale-[0.97] ${confirmCancel
-                      ? "animate-pulse border border-rose-500/60 bg-rose-500/20 text-rose-200 shadow-lg shadow-rose-500/20"
-                      : "border border-transparent text-[#6b6882] hover:text-[#c4c0d4]"
-                    }`}
-                  >
-                    {confirmCancel ? "⚠️ Confirmer l'annulation" : "Annuler la joust"}
-                  </button>
-                </Card>
-              )}
-
-              {/* — joust cancelled (par un joueur) — */}
-              {match?.status === "cancelled" && (
-                <div className="anim-fade-up space-y-6 text-center">
-                  <Badge tone="danger">Joust annulée</Badge>
-                  <Card className="anim-fade-up-d1 p-8">
-                    <p className="text-lg font-black text-white">Cette joust a été annulée</p>
-                    <div className="mt-6"><Btn onClick={leaveMatch}>Retour à l'accueil</Btn></div>
-                  </Card>
-                </div>
-              )}
-
               {/* — chess — */}
               {chessStarted && (
                 <div className="anim-fade-up space-y-3">
@@ -2583,16 +2270,16 @@ type FriendRequest = {
 
         <footer className="relative z-10 border-t border-white/[0.04] bg-[#08090e]/80 pb-[calc(var(--safe-bottom)+1rem)] pt-4 text-center backdrop-blur-xl"><p className="text-[10px] font-bold text-[#3a3851]">Joust</p></footer>
 
-        {/* QR modal — depuis l'écran match (showQr + match) ou depuis une card du home (qrMatchId) */}
+        {/* QR modal — depuis une card du home (qrMatchId) */}
         {(() => {
-          const qMatch = qrMatchId ? myMatches.find((x) => x.id === qrMatchId) ?? null : (showQr ? match : null);
+          const qMatch = qrMatchId ? myMatches.find((x) => x.id === qrMatchId) ?? null : null;
           if (!qMatch) return null;
           const origin = typeof window !== "undefined" ? window.location.origin : "";
           const qrUrl = `${origin}/?code=${qMatch.inviteCode}`;
           return (
-            <div className="fixed inset-0 z-[55] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={() => { setShowQr(false); setQrMatchId(null); }}>
+            <div className="fixed inset-0 z-[55] grid place-items-center bg-black/80 p-5 backdrop-blur-sm" onClick={() => setQrMatchId(null)}>
               <div className="anim-fade-up w-full max-w-xs rounded-[28px] border border-white/[0.08] bg-[#101018] p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between"><Badge tone="accent">Scanner pour rejoindre</Badge><button onClick={() => { setShowQr(false); setQrMatchId(null); }} aria-label="Fermer" className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={13} /></button></div>
+                <div className="flex items-center justify-between"><Badge tone="accent">Scanner pour rejoindre</Badge><button onClick={() => setQrMatchId(null)} aria-label="Fermer" className="grid h-7 w-7 place-items-center rounded-lg bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06]"><X size={13} /></button></div>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/api/qr?url=${encodeURIComponent(qrUrl)}`} alt={`QR code pour rejoindre la joust ${qMatch.inviteCode}`} className="mx-auto mt-5 h-56 w-56 rounded-2xl bg-white p-3" />
                 <p className="mt-4 font-mono text-2xl font-black tracking-[0.28em] text-white">{qMatch.inviteCode}</p>
