@@ -280,11 +280,16 @@ type FriendRequest = {
     const notify5minRef = useRef(true);
     const [editing, setEditing] = useState(false);
     const [confirmCancel, setConfirmCancel] = useState(false);
+    const cancelTimer = useRef<number | null>(null);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showMoves, setShowMoves] = useState(false);
-    const cancelTimer = useRef<number | null>(null);
-    const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
     const prevWaitingRef = useRef(false);
+    /* Card = hub : éditeur de négociation intégré à la card, cards repliées
+      manuellement (même auto-dépliées), et match ciblé pour le QR code. */
+    const [editingCardId, setEditingCardId] = useState<string | null>(null);
+    const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+    const [qrMatchId, setQrMatchId] = useState<string | null>(null);
+    const deferredPrompt = useRef<{ prompt: () => Promise<void> } | null>(null);
     const platform = detectPlatform();
     const standalone = isStandalone();
 
@@ -491,18 +496,18 @@ type FriendRequest = {
     }, [authUser]);
 
     /* Ouvre un joust depuis la liste des cards.
-      Les jousts validées (armed) restent sur l'accueil : la card dépliée gère
-      déjà l'arrivée et le lancement — pas besoin d'un écran intermédiaire. */
+      Tout se passe dans la card dépliée sur l'accueil (attente, négociation,
+      arrivée) — seuls la partie en cours et le résultat ouvert l'écran jeu. */
     const openMatch = useCallback(async (m: Match) => {
-      const isArmedMatch = m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed && !m.result;
-      if (isArmedMatch) {
-        setExpandedId(m.id);
-        setScreen("home");
+      if (m.status === "playing" || m.result != null || m.status === "completed") {
+        localStorage.setItem(MATCH_KEY, m.id);
+        await load(m.id);
+        setScreen("match");
         return;
       }
-      localStorage.setItem(MATCH_KEY, m.id);
-      await load(m.id);
-      setScreen("match");
+      setCollapsedIds((prev) => { const n = new Set(prev); n.delete(m.id); return n; });
+      setExpandedId(m.id);
+      setScreen("home");
     }, [load]);
 
     /* Ré-enregistre l'abonnement navigateur côté serveur s'il a disparu.
@@ -807,7 +812,14 @@ type FriendRequest = {
         const next = computeNextOccurrence(timeOfDay, days);
         const r = await fetch("/api/matches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ creatorName: pseudo, scheduledAt: next.toISOString(), timeOfDay, recurrenceDays: formatDays(days), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, timeControl }) });
         const d = (await r.json()) as { match?: Match; error?: string };
-        if (d.match) { localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] }); void loadMyMatches(); setScreen("match"); }
+        if (d.match) {
+          localStorage.setItem(MATCH_KEY, d.match.id); setMoves([]); apply({ match: d.match, moves: [] });
+          /* Retour à l'accueil avec la card de la nouvelle joust DÉPLIÉE */
+          setCollapsedIds((prev) => { const n = new Set(prev); n.delete(d.match!.id); return n; });
+          setExpandedId(d.match.id);
+          setScreen("home");
+          void loadMyMatches();
+        }
         else notify(d.error ?? "Création impossible");
       } catch { notify("Création impossible"); } finally { setSaving(false); }
     }
@@ -901,10 +913,15 @@ type FriendRequest = {
           const jr = await fetch(`/api/matches/${d.match.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "join", playerName: pseudo }) });
           const jd = (await jr.json()) as { match?: Match; error?: string };
           if (!jd.match) { setJoinError(jd.error ?? "Impossible de rejoindre."); return; }
-          localStorage.setItem(MATCH_KEY, jd.match.id); apply({ match: jd.match }); void loadMyMatches(); setScreen("match");
-          window.history.replaceState({}, "", "/");
+          localStorage.setItem(MATCH_KEY, jd.match.id); apply({ match: jd.match });
+          setCollapsedIds((prev) => { const n = new Set(prev); n.delete(jd.match!.id); return n; });
+          setExpandedId(jd.match.id); setScreen("home");
+          void loadMyMatches(); window.history.replaceState({}, "", "/");
         } else if (d.match.creatorName === pseudo) {
-          localStorage.setItem(MATCH_KEY, d.match.id); apply({ match: d.match }); void loadMyMatches(); setScreen("match");
+          localStorage.setItem(MATCH_KEY, d.match.id); apply({ match: d.match });
+          setCollapsedIds((prev) => { const n = new Set(prev); n.delete(d.match!.id); return n; });
+          setExpandedId(d.match.id); setScreen("home");
+          void loadMyMatches();
         } else {
           setJoinError("Cette joust a déjà deux joueurs.");
         }
@@ -920,6 +937,45 @@ type FriendRequest = {
         if (d.match) { apply({ match: d.match, moves: d.moves }); if (msg) notify(msg); } else if (d.error) notify(d.error);
       } catch { notify("Action impossible"); } finally { setSaving(false); }
     }, [match, apply, notify, pseudo]);
+
+    /* PATCH direct depuis une card de la liste (attente, négociation, arrivée) sans
+      passer par l'écran détail. Met à jour la carte dans `myMatches` + le match actif. */
+    const patchCard = useCallback(async (m: Match, body: Record<string, unknown>, msg?: string) => {
+      setSaving(true);
+      try {
+        const payload = { ...body, playerName: body.playerName ?? pseudo };
+        const r = await fetch(`/api/matches/${m.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const d = (await r.json()) as { match?: Match; moves?: Move[]; error?: string };
+        if (d.match) {
+          setMyMatches((prev) => prev.map((x) => (x.id === m.id ? d.match! : x)));
+          apply({ match: d.match, moves: d.moves });
+          if (msg) notify(msg);
+        } else if (d.error) notify(d.error);
+      } catch { notify("Action impossible"); } finally { setSaving(false); }
+    }, [apply, notify, pseudo]);
+
+    /* Ouvre l'éditeur de contre-proposition DANS la card dépliée, prérempli. */
+    function openCardEditor(m: Match) {
+      setTimeOfDay(m.timeOfDay);
+      setDays(parseDays(m.recurrenceDays));
+      setTimeControl(tcInfo(m.timeControl).id);
+      setEditingCardId(m.id);
+    }
+
+    /* Envoie une contre-proposition depuis l'éditeur intégré à la card ;
+      la carte reste dépliée et revient en mode « en attente ». */
+    function sendCounterCard(m: Match) {
+      const next = computeNextOccurrence(timeOfDay, days);
+      void patchCard(
+        m,
+        { action: "counter", by: iCreatorOf(m) ? "creator" : "guest", timeControl, timeOfDay, recurrenceDays: formatDays(days), scheduledAt: next.toISOString() },
+        "Contre-proposition envoyée",
+      );
+      setEditingCardId(null);
+    }
+
+    /* Petit helper : un match appartient-il au créateur ? */
+    function iCreatorOf(m: Match) { return m.creatorName === pseudo; }
 
     function sendCounter() {
       if (!match) return;
@@ -1378,7 +1434,15 @@ type FriendRequest = {
                         < 1h restante → affichage automatiquement en grand. */
                       const withinHour = msLeft > 0 && msLeft <= 3_600_000;
                       const expanded = expandedId === m.id;
-                      const showDetail = (armed || playing) && (expanded || withinHour || mUnlocked);
+                      /* Négociation intégrée : un adversaire a rejoint et la proposition
+                        est en attente → la card dépliée affiche valider / modifier / refuser. */
+                      const negotiating = Boolean(m.guestName && pending);
+                      /* Une card auto-dépliée (heure arrivée, <1h) peut être repliée
+                        manuellement ; elle peut aussi être rouverte depuis l'en-tête. */
+                      const manuallyCollapsed = collapsedIds.has(m.id);
+                      const showDetail = (armed || playing || negotiating) && (expanded || withinHour || mUnlocked) && !manuallyCollapsed;
+                      const iMustAnswerCard = Boolean(m.guestName && pending && !(iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
+                      const waitingOppCard = Boolean(m.guestName && pending && (iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
                       /* Statut → pastille de couleur dans l'icône à gauche */
                       const statusDot = playing
                         ? "bg-emerald-400"
@@ -1401,7 +1465,19 @@ type FriendRequest = {
                       return (
                         <div key={m.id} className={`w-full rounded-[20px] border bg-[#13151d] shadow-xl shadow-black/20 transition-all duration-200 ${infoTipId === m.id ? "overflow-visible" : "overflow-hidden"} ${showDetail ? "border-violet-500/40 ring-1 ring-violet-500/20" : "border-white/[0.06] hover:border-violet-500/30"}`}>
                           {/* En-tête compact cliquable */}
-                          <button onClick={() => { if (armed) { setExpandedId(expanded ? null : m.id); } else { void openMatch(m); } }} className="block w-full p-4 text-left">
+                          <button
+                            onClick={() => {
+                              if (armed || negotiating) {
+                                /* Ouvre/ferme la card (l'ouverture retire la repliure manuelle) */
+                                setCollapsedIds((prev) => { const n = new Set(prev); if (!expanded || manuallyCollapsed) n.delete(m.id); else n.add(m.id); return n; });
+                                setExpandedId(expanded && !manuallyCollapsed ? null : m.id);
+                                setEditingCardId((prev) => (prev === m.id && expanded && !manuallyCollapsed ? null : prev));
+                              } else {
+                                void openMatch(m);
+                              }
+                            }}
+                            className="block w-full p-4 text-left"
+                          >
                             <div className="flex items-center gap-3.5">
                               {/* Icône gauche : avatar de l'adversaire (ou logo Joust si pas d'adversaire) + pastille de statut */}
                               <div className="relative shrink-0">
@@ -1468,6 +1544,39 @@ type FriendRequest = {
                                     </div>
                                   </div>
                                 </>
+                              )}
+                              {/* Négociation intégrée : valider / modifier / refuser dans la card */}
+                              {negotiating && (
+                                <div className="space-y-2 px-5 pb-2 pt-2">
+                                  {editingCardId === m.id ? (
+                                    /* Éditeur de contre-proposition dans la card */
+                                    <div className="space-y-3 rounded-2xl bg-white/[0.02] p-3 ring-1 ring-white/[0.05]">
+                                      <Field label="Heure"><input type="time" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)} className={`${inputCls} text-center font-mono text-xl font-black`} /></Field>
+                                      <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Jours</span><DayPicker days={days} toggle={toggleDay} setDays={setDays} /></div>
+                                      <div><span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Cadence</span><TcPicker value={timeControl} onChange={setTimeControl} compact /></div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <Btn variant="secondary" onClick={() => setEditingCardId(null)} disabled={saving}>Annuler</Btn>
+                                        <Btn onClick={() => sendCounterCard(m)} disabled={saving}>Envoyer</Btn>
+                                      </div>
+                                    </div>
+                                  ) : iMustAnswerCard ? (
+                                    <>
+                                      <p className="rounded-xl bg-amber-500/[0.06] px-3 py-2 text-center text-[11px] font-bold text-amber-200 ring-1 ring-amber-500/20">
+                                        🎯 {opp || "Ton adversaire"} a proposé — valide, modifie ou refuse.
+                                      </p>
+                                      <Btn onClick={() => void patchCard(m, { action: "accept" }, "Joust validée !")} disabled={saving}>Accepter ces paramètres</Btn>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <Btn variant="secondary" onClick={() => openCardEditor(m)} disabled={saving}>Proposer autre chose</Btn>
+                                        <Btn variant="danger" onClick={() => void patchCard(m, { action: "decline" }, "Joust refusée")} disabled={saving}>Refuser</Btn>
+                                      </div>
+                                    </>
+                                  ) : waitingOppCard ? (
+                                    <>
+                                      <div className="flex items-center justify-center gap-2 rounded-2xl bg-amber-500/[0.06] px-4 py-3 ring-1 ring-amber-500/20"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" /><p className="text-xs font-bold text-amber-200">{opp} doit valider…</p></div>
+                                      <Btn variant="secondary" onClick={() => openCardEditor(m)} disabled={saving}>Modifier ma proposition</Btn>
+                                    </>
+                                  ) : null}
+                                </div>
                               )}
                               {/* Bouton d'arrivée quand l'heure est arrivée */}
                               {mUnlocked && armed && !arrived && !playing && (
