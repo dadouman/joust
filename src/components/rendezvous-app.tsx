@@ -2251,78 +2251,38 @@ type FriendRequest = {
                   )}
                   {isOver && !rematchOpen && (
                     <div className="space-y-3">
-                      {/* Bandeau résultat : icône + titre compact, clic → modifier le rendez-vous */}
-                      <button
-                        type="button"
-                        onClick={openRematchEditor}
-                        className={`flex w-full items-center justify-center gap-2.5 rounded-2xl border px-4 py-3.5 text-center transition active:scale-[0.98] ${resultTone}`}
-                        title={matchDays.length > 0 ? "Double-clic pour modifier la prochaine date" : "Prévoir une revanche"}
-                      >
+                      {/* Bandeau résultat : simple et informatif */}
+                      <div className={`flex items-center justify-center gap-2.5 rounded-2xl border px-4 py-3.5 text-center ${resultTone}`}>
                         {iWon ? <Trophy size={17} className="shrink-0" /> : iLost ? <Frown size={17} className="shrink-0" /> : <Handshake size={17} className="shrink-0" />}
                         <p className="text-sm font-black">{resultTitle}</p>
                         <p className="truncate text-[11px] font-bold opacity-80">{resultDetail}</p>
-                      </button>
+                      </div>
 
-                      {/* Prochaine date planifiée : clic unique → modifier, double-clic → annuler */}
+                      {/* Une seule action principale, évidente :
+                        - pas de rendez-vous planifié → « Proposer une revanche »
+                        - rendez-vous récurrent → « Modifier le prochain rendez-vous »
+                        Les deux ouvrent le même éditeur prérempli. */}
                       {matchDays.length > 0 ? (
                         <button
                           type="button"
                           onClick={openRematchEditor}
-                          onDoubleClick={() => void handleCardCancelClick(match)}
-                          title="Clic : modifier · Double-clic : annuler le rendez-vous"
-                          className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.06] bg-[#13151d] px-4 py-3 text-left shadow-lg shadow-black/20 transition-all duration-200 active:scale-[0.98] hover:border-violet-500/30"
+                          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-violet-600/25 transition-all duration-200 hover:bg-violet-500 active:scale-[0.97]"
                         >
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/15 text-violet-200 ring-1 ring-violet-500/25"><Calendar size={16} /></div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-[#6b6882]">Prochain rendez-vous</p>
-                            <p className="truncate text-sm font-black capitalize text-white">{nextJoustDate ? nextJoustDate.toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "—"}</p>
-                          </div>
-                          <Pencil size={14} className="shrink-0 text-[#3a3851]" />
+                          <Calendar size={16} />
+                          Modifier le prochain rendez-vous
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={openRematchEditor}
-                          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white/[0.03] px-4 py-3.5 text-sm font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.06] transition-all duration-200 hover:bg-white/[0.06] active:scale-[0.97]"
+                          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-violet-600/25 transition-all duration-200 hover:bg-violet-500 active:scale-[0.97]"
                         >
-                          <Swords size={16} className="text-violet-300" /> Prévoir la revanche
+                          <Swords size={16} />
+                          Proposer une revanche
                         </button>
                       )}
 
-                      {/* Actions : modifier / annuler (double-clic) — tout en icônes pour aérer */}
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={openRematchEditor}
-                          aria-label="Modifier le rendez-vous"
-                          title="Modifier"
-                          className="grid h-11 w-11 place-items-center rounded-xl bg-white/[0.04] text-[#6b6882] ring-1 ring-white/[0.06] transition hover:text-violet-300 active:scale-90"
-                        >
-                          <Pencil size={16} />
-                        </button>
-                        {matchDays.length === 0 && (
-                          <button
-                            type="button"
-                            onClick={openRematchEditor}
-                            aria-label="Prévoir une revanche"
-                            title="Revanche"
-                            className="grid h-11 w-11 place-items-center rounded-xl bg-violet-600/15 text-violet-200 ring-1 ring-violet-500/30 transition hover:bg-violet-600/25 active:scale-90"
-                          >
-                            <Swords size={16} />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => void handleCardCancelClick(match)}
-                          onDoubleClick={() => void handleCardCancelClick(match)}
-                          aria-label={cancelConfirmId === match.id ? "Confirmer l'annulation" : "Annuler la joust"}
-                          title={cancelConfirmId === match.id ? "Double-clic pour confirmer l'annulation" : "Annuler (double-clic)"}
-                          className={`grid h-11 w-11 place-items-center rounded-xl ring-1 transition active:scale-90 ${cancelConfirmId === match.id ? "animate-pulse border border-rose-500/60 bg-rose-500/20 text-rose-200 shadow-lg shadow-rose-500/20" : "bg-white/[0.04] text-[#6b6882] ring-white/[0.06] hover:text-rose-300"}`}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                      {/* Ligne du bas : retour à l'accueil */}
+                      {/* Retour discret */}
                       <div className="text-center">
                         <button onClick={leaveMatch} className="text-xs font-bold text-[#6b6882] transition hover:text-[#c4c0d4]">Retour à l'accueil</button>
                       </div>
