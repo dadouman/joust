@@ -361,6 +361,12 @@ type FriendRequest = {
     const ultimatumAgainstMe = Boolean(match?.ultimatumDeadline) && !ultimatumByMe;
     const ultimatumDeadlineLeft = match?.ultimatumDeadline ? Math.max(0, Math.floor((new Date(match.ultimatumDeadline).getTime() - now) / 1000)) : 0;
     const nudgeCooldownLeft = match?.arrivalNoticeSentAt ? Math.max(0, 60 - Math.floor((now - new Date(match.arrivalNoticeSentAt).getTime()) / 1000)) : 0;
+    /* Veille d'arrivée sur le home : clé stable des jousts armées et à l'heure
+      pour rafraîchir la liste et détecter le lancement automatique de la partie. */
+    const arrivalWatchKey = myMatches
+      .filter((m) => m.status === "scheduled" && m.inviteStatus === "accepted" && m.timeControlConfirmed && new Date(m.scheduledAt).getTime() <= Date.now())
+      .map((m) => `${m.id}:${m.arrivalCreator ? "1" : "0"}:${m.arrivalGuest ? "1" : "0"}:${m.status}`)
+      .join("|");
     const isOver = chess.isGameOver() || matchOver;
     const matchDays = useMemo(() => parseDays(match?.recurrenceDays), [match?.recurrenceDays]);
     /* ── Fin de partie : résultat enrichi + prochaine occurrence ── */
@@ -716,6 +722,25 @@ type FriendRequest = {
       return () => clearInterval(t);
     }, [authUser, loadFriendRequests]);
 
+    /* Rafraîchit la liste toutes les 5 s quand une joust est arrivée à l'heure
+      (un joueur attend l'autre) — détecte l'arrivée de l'adversaire et le
+      lancement automatique de la partie. */
+    useEffect(() => {
+      if (screen !== "home" || !arrivalWatchKey) return;
+      const t = setInterval(() => void loadMyMatches(), 5000);
+      return () => clearInterval(t);
+    }, [screen, arrivalWatchKey, loadMyMatches]);
+
+    /* Lancement automatique : quand une card passe en "playing" (les deux
+      joueurs sont arrivés), on ouvre l'écran de jeu directement. */
+    useEffect(() => {
+      if (screen !== "home") return;
+      const playingCard = myMatches.find((x) => x.status === "playing");
+      if (!playingCard) return;
+      localStorage.setItem(MATCH_KEY, playingCard.id);
+      void load(playingCard.id).then(() => setScreen("match"));
+    }, [screen, myMatches, load]);
+
     /* Canal temps réel unique : SSE — le backend pousse les changements depuis le
       stream Lichess (coups, horloges, fin) et met à jour la base toutes les 500 ms.
       Plus aucun polling 8 s ni Supabase Realtime (broadcast fire-and-forget peu fiable). */
@@ -926,6 +951,11 @@ type FriendRequest = {
         if (d.match) {
           setMyMatches((prev) => prev.map((x) => (x.id === m.id ? d.match! : x)));
           apply({ match: d.match, moves: d.moves });
+          /* Les deux joueurs arrivés → le serveur lance la partie : ouvrir le jeu. */
+          if (d.match.status === "playing") {
+            localStorage.setItem(MATCH_KEY, d.match.id);
+            setScreen("match");
+          }
           if (msg) notify(msg);
         } else if (d.error) notify(d.error);
       } catch { notify("Action impossible"); } finally { setSaving(false); }
@@ -1404,6 +1434,13 @@ type FriendRequest = {
                       const showDetail = (armed || playing || negotiating || waitingPlayer) && (expanded || withinHour || mUnlocked) && !manuallyCollapsed;
                       const iMustAnswerCard = Boolean(m.guestName && pending && !(iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
                       const waitingOppCard = Boolean(m.guestName && pending && (iCreator ? m.timeControlBy === "creator" : m.timeControlBy === "guest"));
+                      /* Arrivée : cooldown notification (1 min), ultimatum et arrivée de l'adversaire */
+                      const mNudgeCooldown = m.arrivalNoticeSentAt ? Math.max(0, 60 - Math.floor((now - new Date(m.arrivalNoticeSentAt).getTime()) / 1000)) : 0;
+                      const mUltActive = Boolean(m.ultimatumDeadline);
+                      const mUltByMe = mUltActive && (m.ultimatumBy ?? "creator") === (iCreator ? "creator" : "guest");
+                      const mUltAgainstMe = mUltActive && !mUltByMe;
+                      const mUltLeft = m.ultimatumDeadline ? Math.max(0, Math.floor((new Date(m.ultimatumDeadline).getTime() - now) / 1000)) : 0;
+                      const oppArrivedCard = iCreator ? Boolean(m.arrivalGuest) : Boolean(m.arrivalCreator);
                       /* Statut → pastille de couleur dans l'icône à gauche */
                       const statusDot = playing
                         ? "bg-emerald-400"
@@ -1578,17 +1615,63 @@ type FriendRequest = {
                                   ) : null}
                                 </div>
                               )}
-                              {/* Bouton d'arrivée quand l'heure est arrivée */}
-                              {mUnlocked && armed && !arrived && !playing && (
-                                <div className="px-5 pt-2 text-center">
-                                  <button onClick={() => { localStorage.setItem(MATCH_KEY, m.id); void load(m.id).then(() => setScreen("match")); }} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-3 text-sm font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97]">
-                                    <Zap size={16} /> Je suis arrivé(e)
-                                  </button>
-                                </div>
-                              )}
-                              {mUnlocked && armed && arrived && !playing && (
-                                <div className="px-5 pt-2 text-center">
-                                  <div className="rounded-xl bg-emerald-500/[0.08] px-4 py-3 ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — attente de {opp || "l'adversaire"}…</p></div>
+                              {/* Zone d'arrivée quand l'heure est arrivée :
+                                - pas encore arrivé → bouton Je suis arrivé(e) (+ ultimatum reçu)
+                                - arrivé, adversaire absent → Envoyer notification (cooldown 1 min) + Envoyer ultimatum
+                                - les deux arrivés → le serveur lance la partie automatiquement */}
+                              {mUnlocked && armed && !playing && (
+                                <div className="space-y-2 px-5 pb-2 pt-2">
+                                  {!arrived ? (
+                                    <>
+                                      {mUltAgainstMe && (
+                                        <div className="rounded-2xl bg-rose-500/[0.1] px-4 py-3 text-center ring-1 ring-rose-500/30">
+                                          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">⏳ Ultimatum de {opp || "l'adversaire"}</p>
+                                          <p className="mt-1 font-mono text-3xl font-black text-rose-300">0:{String(mUltLeft).padStart(2, "0")}</p>
+                                          <p className="mt-1 text-[11px] text-rose-200/80">Valide ton arrivée avant la fin du décompte, sinon tu perds par forfait.</p>
+                                        </div>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => void patchCard(m, { action: "arrive" }, "Arrivée validée !")}
+                                        disabled={saving}
+                                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 py-3 text-sm font-extrabold text-white shadow-lg shadow-violet-700/25 transition-all duration-200 hover:brightness-110 active:scale-[0.97] disabled:opacity-40"
+                                      >
+                                        <Zap size={16} /> Je suis arrivé(e)
+                                      </button>
+                                    </>
+                                  ) : !oppArrivedCard ? (
+                                    <>
+                                      <div className="rounded-xl bg-emerald-500/[0.08] px-4 py-3 text-center ring-1 ring-emerald-500/20"><p className="text-xs font-bold text-emerald-300">✅ Tu es arrivé(e) — attente de {opp || "l'adversaire"}…</p></div>
+                                      {mUltByMe && (
+                                        <div className="rounded-2xl bg-rose-500/[0.08] px-4 py-3 text-center ring-1 ring-rose-500/30">
+                                          <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-rose-300">Ultimatum en cours</p>
+                                          <p className="mt-1 font-mono text-3xl font-black text-rose-300">0:{String(mUltLeft).padStart(2, "0")}</p>
+                                        </div>
+                                      )}
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={saving || mNudgeCooldown > 0}
+                                          onClick={() => void patchCard(m, { action: "nudge" }, mNudgeCooldown > 0 ? `Relance possible dans ${mNudgeCooldown}s` : "Notification relancée !")}
+                                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] py-2.5 text-xs font-extrabold text-[#c4c0d4] ring-1 ring-white/[0.08] transition active:scale-95 disabled:opacity-40"
+                                        >
+                                          {mNudgeCooldown > 0 ? `🔔 Encore ${mNudgeCooldown}s` : "🔔 Envoyer une notification"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={saving || mUltActive}
+                                          onClick={() => void patchCard(m, { action: "ultimatum" }, "Ultimatum envoyé !")}
+                                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-500/10 py-2.5 text-xs font-extrabold text-rose-300 ring-1 ring-rose-500/30 transition active:scale-95 disabled:opacity-40"
+                                        >
+                                          ⏳ Envoyer un ultimatum
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="rounded-2xl bg-emerald-500/[0.1] px-4 py-4 text-center ring-1 ring-emerald-500/30">
+                                      <p className="text-sm font-black text-emerald-300">🎉 Les deux joueurs sont arrivés — la partie se lance…</p>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               {/* Annuler la joust (détrompeur 2 clics, comme le flux existant) */}
